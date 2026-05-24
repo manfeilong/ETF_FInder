@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ETF True Exposure Lab</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">ETF True Exposure Lab</p>
+          <h1>10 檔 ETF 同步交叉比對</h1>
+        </div>
+        <div class="status-strip" aria-label="資料狀態">
+          <span id="updateStatusPill" class="status-pill manual"><span></span>未接自動日更</span>
+          <button id="refreshDataBtn" class="refresh-button" type="button">刷新資料</button>
+          <span id="lastRefreshText" class="status-pill">最新資料日 --</span>
+          <span class="status-pill">主動 / 被動 ETF</span>
+        </div>
+      </header>
+
+      <section class="workspace-grid">
+        <aside class="selector-panel" aria-label="ETF 選取與資金配置">
+          <div class="panel-head">
+            <div>
+              <p class="panel-kicker">Selector Hub</p>
+              <h2>ETF 組合</h2>
+            </div>
+            <span class="limit-counter" id="limitCounter">0 / 10</span>
+          </div>
+
+          <label class="search-box" for="etfSearch">
+            <span class="search-icon" aria-hidden="true">⌕</span>
+            <input id="etfSearch" autocomplete="off" placeholder="代號、關鍵字、產業主題" />
+          </label>
+          <div id="universeSummary" class="universe-summary" aria-live="polite"></div>
+          <div id="searchResults" class="search-results" role="listbox"></div>
+          <p id="selectorNotice" class="selector-notice" aria-live="polite"></p>
+
+          <section class="auto-allocation-panel" aria-label="自動產業配比">
+            <div class="allocation-head">
+              <span>自動產生資金配比</span>
+              <button id="autoAllocateBtn" class="icon-button" type="button" title="產生配比" aria-label="產生配比">◎</button>
+            </div>
+            <div class="target-grid">
+              <label class="target-field">
+                <span>板塊 1</span>
+                <select id="targetSector1"></select>
+                <input id="targetWeight1" type="number" min="0" max="100" step="1" value="45" aria-label="板塊 1 期望比例" />
+              </label>
+              <label class="target-field">
+                <span>板塊 2</span>
+                <select id="targetSector2"></select>
+                <input id="targetWeight2" type="number" min="0" max="100" step="1" value="35" aria-label="板塊 2 期望比例" />
+              </label>
+              <label class="target-field">
+                <span>板塊 3</span>
+                <select id="targetSector3"></select>
+                <input id="targetWeight3" type="number" min="0" max="100" step="1" value="20" aria-label="板塊 3 期望比例" />
+              </label>
+            </div>
+            <p id="autoAllocationNotice" class="selector-notice" aria-live="polite"></p>
+          </section>
+
+          <div class="allocation-head">
+            <span>資金配比</span>
+            <button id="equalizeBtn" class="icon-button" type="button" title="平均配比" aria-label="平均配比">↔</button>
+          </div>
+          <div id="selectedEtfs" class="selected-list"></div>
+
+          <div class="allocation-meter" aria-label="資金配置總和">
+            <div class="meter-row">
+              <span>總配置</span>
+              <strong id="allocationTotal">100%</strong>
+            </div>
+            <div class="meter-track">
+              <div id="allocationBar" class="meter-fill"></div>
+            </div>
+          </div>
+        </aside>
+
+        <section class="main-grid" aria-label="分析結果">
+          <section class="metric-row" aria-label="摘要指標">
+            <article class="metric-card">
+              <span>合併持股</span>
+              <strong id="holdingCount">0</strong>
+            </article>
+            <article class="metric-card">
+              <span>最高單股曝險</span>
+              <strong id="topExposure">0%</strong>
+            </article>
+            <article class="metric-card">
+              <span>主要產業</span>
+              <strong id="topSector">-</strong>
+            </article>
+            <article class="metric-card">
+              <span>共同持股</span>
+              <strong id="overlapCount">0</strong>
+            </article>
+          </section>
+
+          <section class="analysis-layout">
+            <article class="panel exposure-panel">
+              <div class="panel-head compact">
+                <div>
+                  <p class="panel-kicker">True Exposure Matrix</p>
+                  <h2>真實權值透視</h2>
+                </div>
+                <span id="riskBadge" class="risk-badge">分散正常</span>
+              </div>
+              <div id="exposureChart" class="bar-chart" aria-label="合併權重前十名"></div>
+            </article>
+
+            <article class="panel sector-panel">
+              <div class="panel-head compact">
+                <div>
+                  <p class="panel-kicker">Sector X-Ray</p>
+                  <h2>產業板塊</h2>
+                </div>
+                <div class="view-toggle" role="group" aria-label="產業圖表切換">
+                  <button class="toggle-btn active" data-sector-view="treemap" type="button">矩形</button>
+                  <button class="toggle-btn" data-sector-view="donut" type="button">圓環</button>
+                </div>
+              </div>
+              <div id="sectorViz" class="sector-viz treemap" aria-label="合併產業配置"></div>
+              <div id="sectorDetail" class="sector-detail" aria-live="polite"></div>
+            </article>
+          </section>
+
+          <section class="panel heatmap-panel">
+            <div class="panel-head compact">
+              <div>
+                <p class="panel-kicker">Overlap Heatmap</p>
+                <h2>持股交集熱力圖</h2>
+              </div>
+              <label class="slider-field" for="overlapSlider">
+                <span>至少 <strong id="overlapValue">2</strong> 檔</span>
+                <input id="overlapSlider" type="range" min="1" max="10" value="2" />
+              </label>
+            </div>
+            <div id="heatmap" class="heatmap" aria-label="ETF 持股交集"></div>
+          </section>
+
+          <section class="panel history-panel">
+            <div class="panel-head compact">
+              <div>
+                <p class="panel-kicker">Daily Holding Change</p>
+                <h2>每日持股變化</h2>
+              </div>
+              <label class="select-field" for="historyEtfSelect">
+                <span>ETF</span>
+                <select id="historyEtfSelect"></select>
+              </label>
+            </div>
+            <div id="historySummary" class="history-summary"></div>
+            <div id="historyChart" class="history-chart" aria-label="近月持股調整幅度"></div>
+            <div id="historyTable" class="history-table" aria-label="近月每日持股變化"></div>
+          </section>
+
+          <section class="panel architecture-panel">
+            <div class="panel-head compact">
+              <div>
+                <p class="panel-kicker">Service Blueprint</p>
+                <h2>前後端分離資料流</h2>
+              </div>
+            </div>
+            <div class="service-flow" aria-label="微服務資料流">
+              <div class="service-node">Next.js UI</div>
+              <div class="flow-arrow">→</div>
+              <div class="service-node">FastAPI<br />Exposure API</div>
+              <div class="flow-arrow">→</div>
+              <div class="service-node">Redis<br />Daily Cache</div>
+              <div class="flow-arrow">→</div>
+              <div class="service-node">PostgreSQL<br />Holdings History</div>
+              <div class="flow-arrow">→</div>
+              <div class="service-node">PCF / TWSE<br />Collectors</div>
+            </div>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>
