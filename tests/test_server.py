@@ -121,6 +121,17 @@ class ServerLogicTests(unittest.TestCase):
         self.assertFalse(ok2)
         self.assertIn("coverage", reason2)
 
+    def test_snapshot_quality_check_rejects_unavailable_weights(self):
+        row = {
+            "coverage": "partial_official_pcf_missing_weights",
+            "declaredHoldingCount": 30,
+            "parsedHoldingCount": 30,
+            "holdings": {"2330": 0.0, "2454": 0.0},
+        }
+        ok, reason = server.snapshot_quality_check(row, require_full=False, min_declared=0, min_parsed=0)
+        self.assertFalse(ok)
+        self.assertIn("all zero", reason)
+
     def test_parse_etfinfo_holdings_prefers_nuxt_payload(self):
         nuxt_pool = [
             None,
@@ -1091,6 +1102,106 @@ class ServerLogicTests(unittest.TestCase):
         self.assertFalse(server.official_registry_source_matches(source, "006208", None))
         adapter = server.OfficialRegistryAdapter().build_source_adapter(source, code="0056")
         self.assertEqual(adapter.url_template, "https://issuer.example/funds/456/holdings")
+
+    def test_cathay_official_pcf_adapter_combines_asset_types_without_claiming_weights(self):
+        adapter = server.CathayOfficialPcfAdapter(
+            api_base_url="https://cwapi.example/api/BuySale",
+            fund_code="CN",
+            headers={"Referer": "https://issuer.example/product"},
+        )
+        responses = {
+            "GetBuySale": {
+                "result": {
+                    "date": "2026/09/14",
+                    "basketUnit": "500,000",
+                    "basketNav": "17,165,000",
+                    "currency": "新台幣",
+                },
+                "returnCode": "2000",
+                "success": True,
+            },
+            "GetStocksList": {
+                "result": [{"prod": "2330", "prodName": "台積電", "basketShares": "10,000"}],
+                "returnCode": "2000",
+                "success": True,
+            },
+            "GetBondsList": {
+                "result": [
+                    {
+                        "figiCode": "BBG000TEST",
+                        "prodName": "US TREASURY",
+                        "basketSharesF": "1,362",
+                        "marketValB": "1,396",
+                    }
+                ],
+                "returnCode": "2000",
+                "success": True,
+            },
+            "GetFuturesList": {
+                "result": [{"prod": "YM", "prodName": "MINI DJ", "basketSharesF": "4.18", "ftDate": "2026/09"}],
+                "returnCode": "2000",
+                "success": True,
+            },
+        }
+        requested_urls = []
+        original_get_url = server.get_url_with_retry
+        try:
+            def fake_get_url(url: str, timeout=20, retries=0, backoff_ms=0, headers=None):
+                requested_urls.append(url)
+                endpoint = next(name for name in responses if f"/{name}?" in url)
+                return server.json.dumps(responses[endpoint], ensure_ascii=False), 1
+
+            server.get_url_with_retry = fake_get_url
+            payload = adapter.fetch_one("00878")
+        finally:
+            server.get_url_with_retry = original_get_url
+
+        self.assertEqual(payload["asOf"], "2026-09-14")
+        self.assertEqual(payload["declaredHoldingCount"], 3)
+        self.assertEqual(payload["parsedHoldingCount"], 3)
+        self.assertEqual(payload["coverage"], "partial_official_pcf_missing_weights")
+        self.assertEqual(payload["holdings"]["2330"], 0.0)
+        self.assertEqual(payload["holdings"]["BBG000TEST"], 0.0)
+        self.assertEqual(payload["holdings"]["FUTURE:YM:2026/09"], 0.0)
+        self.assertEqual(payload["holdingDetails"][1]["marketValue"], "1,396")
+        self.assertTrue(any("SearchDate=2026%2F09%2F14" in url for url in requested_urls))
+        self.assertTrue(any("not constituent weights" in warning for warning in payload["warnings"]))
+
+    def test_official_registry_supports_cathay_fund_code_mapping(self):
+        source = {
+            "enabled": True,
+            "format": "cathay_pcf",
+            "url": "https://cwapi.example/api/BuySale",
+            "fundCodesByCode": {"00878": "CN", "00636K": "66"},
+        }
+        self.assertTrue(server.official_registry_source_matches(source, "00636K", None))
+        self.assertFalse(server.official_registry_source_matches(source, "0050", None))
+        adapter = server.OfficialRegistryAdapter().build_source_adapter(source, code="00878")
+        self.assertIsInstance(adapter, server.CathayOfficialPcfAdapter)
+        self.assertEqual(adapter.fund_code, "CN")
+
+    def test_validate_official_source_registry_accepts_cathay_mapping(self):
+        universe = [{"code": "00878", "name": "ETF A", "issuer": "Cathay", "status": "listed"}]
+        registry = {
+            "schemaVersion": 1,
+            "sources": [
+                {
+                    "name": "cathay-official",
+                    "enabled": True,
+                    "status": "active",
+                    "publisher": "Cathay",
+                    "authorityType": "issuer",
+                    "verifiedAt": "2026-09-12",
+                    "format": "cathay_pcf",
+                    "expectedCoverage": "partial",
+                    "url": "https://cwapi.example/api/BuySale",
+                    "fundCodesByCode": {"00878": "CN"},
+                }
+            ],
+        }
+        result = server.validate_official_source_registry(registry, universe)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["coverage"]["coveredListedCount"], 1)
 
     def test_append_and_read_refresh_alerts(self):
         original_file = server.ALERTS_FILE

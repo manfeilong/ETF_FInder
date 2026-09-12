@@ -32,6 +32,8 @@ python server.py --check-official-registry
 
 Registry rows can match exact `codes`, per-code `urlsByCode`, `codePrefixes`, `issuerContains`, or `nameContains`, and can fetch `json`, `csv`, or official `html` pages. HTML pages may expose labeled rows, native tables, responsive `div` tables, or name-only top-holdings tables; supported holding identifiers include Taiwan codes, exchange-suffixed symbols, and ISINs. Name-only rows are matched exactly against the local stock universe, while unresolved foreign or bond names remain explicit `NAME:` identifiers. HTML results remain `partial_official_page` unless a CSV/JSON/PCF export proves complete coverage.
 
+Cathay's issuer API uses `format: "cathay_pcf"` together with `url` and `fundCodesByCode`. The adapter first resolves the latest PCF date, then combines the official stock, bond, and futures basket endpoints. These endpoints publish quantities but no constituent weights, so their rows deliberately remain `partial_official_pcf_missing_weights`; zero weights are explicit placeholders and strict production mode rejects them.
+
 Enable strict completeness gate for official snapshots:
 
 ```powershell

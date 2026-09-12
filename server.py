@@ -289,7 +289,7 @@ def load_official_source_registry() -> dict:
     return payload
 
 
-REGISTRY_FORMATS = {"json", "csv", "html"}
+REGISTRY_FORMATS = {"json", "csv", "html", "cathay_pcf"}
 REGISTRY_AUTHORITY_TYPES = {"issuer", "exchange", "regulator"}
 REGISTRY_SOURCE_STATUSES = {"active", "testing", "disabled", "deprecated"}
 
@@ -358,7 +358,7 @@ def validate_official_source_registry(registry: dict, universe: list[dict]) -> d
 
         data_format = str(source.get("format") or "").strip().lower()
         if data_format not in REGISTRY_FORMATS:
-            source_issues.append("format must be json, csv, or html")
+            source_issues.append("format must be json, csv, html, or cathay_pcf")
         expected_coverage = str(source.get("expectedCoverage") or "").strip().lower()
         if expected_coverage not in {"full", "partial"}:
             source_issues.append("expectedCoverage must be full or partial")
@@ -366,6 +366,7 @@ def validate_official_source_registry(registry: dict, universe: list[dict]) -> d
             source_warnings.append("source is official but cannot satisfy strict full-holdings quality")
         url_template = str(source.get("urlTemplate") or source.get("url") or "").strip()
         urls_by_code = source.get("urlsByCode")
+        fund_codes_by_code = source.get("fundCodesByCode")
         if url_template:
             parsed_url = urlparse(url_template.replace("{code}", "0050").replace("{date}", "2026-01-01"))
             if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
@@ -409,8 +410,33 @@ def validate_official_source_registry(registry: dict, universe: list[dict]) -> d
                     source_warnings.append(
                         f"urlsByCode codes not found in current universe: {','.join(unknown_url_codes[:20])}"
                     )
+        if fund_codes_by_code is not None:
+            if not isinstance(fund_codes_by_code, dict) or not fund_codes_by_code:
+                source_issues.append("fundCodesByCode must be a non-empty object")
+            else:
+                selectors_present = True
+                normalized_fund_codes: list[str] = []
+                for raw_code, raw_fund_code in fund_codes_by_code.items():
+                    mapped_code = normalize_code(str(raw_code))
+                    normalized_fund_codes.append(mapped_code)
+                    fund_code = str(raw_fund_code or "").strip().upper()
+                    if not CODE_PATTERN.fullmatch(mapped_code):
+                        source_issues.append(f"fundCodesByCode has invalid ETF code: {raw_code}")
+                    if not re.fullmatch(r"[A-Z0-9]{1,12}", fund_code):
+                        source_issues.append(f"fundCodesByCode[{raw_code}] must be an alphanumeric fund code")
+                if len(normalized_fund_codes) != len(set(normalized_fund_codes)):
+                    source_issues.append("fundCodesByCode contains duplicate normalized ETF codes")
+                unknown_fund_codes = sorted({code for code in normalized_fund_codes if code not in available_codes})
+                if unknown_fund_codes:
+                    source_warnings.append(
+                        f"fundCodesByCode codes not found in current universe: {','.join(unknown_fund_codes[:20])}"
+                    )
+                if data_format != "cathay_pcf":
+                    source_issues.append("fundCodesByCode requires format=cathay_pcf")
         if not selectors_present:
-            source_issues.append(f"one selector is required: {', '.join(selector_fields)}, urlsByCode")
+            source_issues.append(
+                f"one selector is required: {', '.join(selector_fields)}, urlsByCode, fundCodesByCode"
+            )
 
         configured_codes = source.get("codes")
         if isinstance(configured_codes, list):
@@ -548,6 +574,7 @@ def snapshot_quality_check(
     declared = int(row.get("declaredHoldingCount") or 0)
     parsed = int(row.get("parsedHoldingCount") or 0)
     coverage = str(row.get("coverage", "")).strip().lower()
+    holdings = row.get("holdings")
 
     if require_full and coverage != "full":
         return False, f"coverage is {coverage or 'unknown'}, expected full"
@@ -555,6 +582,13 @@ def snapshot_quality_check(
         return False, f"declared holding count {declared} is below minimum {min_declared}"
     if min_parsed > 0 and parsed < min_parsed:
         return False, f"parsed holding count {parsed} is below minimum {min_parsed}"
+    if isinstance(holdings, dict) and holdings:
+        try:
+            has_positive_weight = any(float(weight) > 0 for weight in holdings.values())
+        except (TypeError, ValueError):
+            return False, "holding weights contain a non-numeric value"
+        if not has_positive_weight:
+            return False, "holding weights are unavailable or all zero"
     return True, ""
 
 
@@ -2998,6 +3032,10 @@ def official_registry_source_matches(source: dict, code: str, universe_row: dict
     if isinstance(urls_by_code, dict) and urls_by_code:
         configured_url_codes = {normalize_code(str(item)) for item in urls_by_code}
         return normalized_code in configured_url_codes
+    fund_codes_by_code = source.get("fundCodesByCode")
+    if isinstance(fund_codes_by_code, dict) and fund_codes_by_code:
+        configured_fund_codes = {normalize_code(str(item)) for item in fund_codes_by_code}
+        return normalized_code in configured_fund_codes
     configured_codes = source.get("codes")
     if isinstance(configured_codes, list) and configured_codes:
         return normalized_code in {normalize_code(str(item)) for item in configured_codes}
@@ -3039,11 +3077,150 @@ def official_registry_candidates(code: str) -> list[dict]:
     return candidates
 
 
+class CathayOfficialPcfAdapter:
+    """Read Cathay's official PCF basket APIs without overstating weight coverage."""
+
+    name = "cathay_official_pcf"
+    source_label = "Cathay official PCF API"
+    component_endpoints = (
+        ("GetStocksList", "stock"),
+        ("GetBondsList", "bond"),
+        ("GetFuturesList", "future"),
+    )
+
+    def __init__(
+        self,
+        api_base_url: str,
+        fund_code: str,
+        headers: dict[str, str] | None = None,
+        default_as_of: str | None = None,
+    ) -> None:
+        self.api_base_url = str(api_base_url or "").strip().rstrip("/")
+        self.fund_code = str(fund_code or "").strip().upper()
+        self.headers = headers or {}
+        self.default_as_of = str(default_as_of or "").strip()
+        if not self.api_base_url:
+            raise ValueError("Cathay PCF API base URL is required.")
+        if not re.fullmatch(r"[A-Z0-9]{1,12}", self.fund_code):
+            raise ValueError("Cathay PCF fund code must be alphanumeric.")
+
+    def build_url(self, endpoint: str, search_date: str = "") -> str:
+        params = {"FundCode": self.fund_code, "IsTest": "false"}
+        if search_date:
+            params["SearchDate"] = search_date
+        return f"{self.api_base_url}/{endpoint}?{urlencode(params)}"
+
+    def fetch_api_result(self, endpoint: str, search_date: str = "") -> tuple[object, str, int]:
+        url = self.build_url(endpoint, search_date)
+        body, attempts = get_url_with_retry(url=url, headers=self.headers)
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"Cathay {endpoint} returned invalid JSON: {exc}") from exc
+        if not isinstance(payload, dict):
+            raise RuntimeError(f"Cathay {endpoint} returned a non-object payload.")
+        return_code = str(payload.get("returnCode") or "").strip()
+        if return_code != "2000" or payload.get("success") is False:
+            message = str(payload.get("returnMessage") or "unknown API error").strip()
+            raise RuntimeError(f"Cathay {endpoint} failed ({return_code or 'unknown'}): {message}")
+        return payload.get("result"), url, attempts
+
+    @staticmethod
+    def row_identifier(row: dict, asset_type: str) -> str:
+        if asset_type == "stock":
+            return str(row.get("prod") or "").strip().upper()
+        if asset_type == "bond":
+            identifier = str(row.get("figiCode") or "").strip().upper()
+            return identifier or f"BOND:{str(row.get('prodName') or '').strip().upper()}"
+        product = str(row.get("prod") or "").strip().upper()
+        contract_month = str(row.get("ftDate") or "").strip()
+        return f"FUTURE:{product}:{contract_month}" if product else ""
+
+    @staticmethod
+    def row_shares(row: dict, asset_type: str) -> str:
+        field = "basketShares" if asset_type == "stock" else "basketSharesF"
+        return str(row.get(field) or "").strip()
+
+    def fetch_one(self, code: str) -> dict:
+        requested_date = self.default_as_of.replace("-", "/") if self.default_as_of else ""
+        summary, summary_url, attempts = self.fetch_api_result("GetBuySale", requested_date)
+        if not isinstance(summary, dict):
+            raise RuntimeError("Cathay GetBuySale returned no PCF summary.")
+        raw_date = str(summary.get("date") or "").strip()
+        as_of = normalize_snapshot_as_of(raw_date.replace("/", "-"))
+
+        holdings: dict[str, float] = {}
+        details: list[dict] = []
+        fetch_urls = [summary_url]
+        declared_count = 0
+        for endpoint, asset_type in self.component_endpoints:
+            rows, component_url, component_attempts = self.fetch_api_result(endpoint, raw_date)
+            attempts += component_attempts
+            fetch_urls.append(component_url)
+            if rows is None:
+                rows = []
+            if not isinstance(rows, list):
+                raise RuntimeError(f"Cathay {endpoint} result must be an array.")
+            declared_count += len(rows)
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                identifier = self.row_identifier(row, asset_type)
+                if not identifier:
+                    continue
+                if identifier in holdings:
+                    identifier = f"{asset_type.upper()}:{identifier}"
+                holdings[identifier] = 0.0
+                detail = {
+                    "code": identifier,
+                    "name": str(row.get("prodName") or identifier).strip(),
+                    "weight": 0.0,
+                    "shares": self.row_shares(row, asset_type),
+                    "price": "",
+                    "assetType": asset_type,
+                }
+                if asset_type == "bond" and row.get("marketValB") not in {None, ""}:
+                    detail["marketValue"] = str(row.get("marketValB"))
+                details.append(detail)
+
+        if not holdings:
+            raise RuntimeError(f"Cathay PCF returned no component rows for {code} on {as_of}.")
+        warnings = [
+            "Cathay PCF publishes basket quantities but not constituent weights; "
+            "rows are retained with zero placeholder weights and cannot pass full-holdings production quality."
+        ]
+        if len(holdings) != declared_count:
+            warnings.append(
+                f"Parsed {len(holdings)} unique identifiers from {declared_count} declared component rows."
+            )
+        return {
+            "code": normalize_code(code),
+            "source": self.source_label,
+            "adapter": self.name,
+            "asOf": as_of,
+            "holdings": holdings,
+            "holdingDetails": details,
+            "declaredHoldingCount": declared_count,
+            "parsedHoldingCount": len(holdings),
+            "coverage": "partial_official_pcf_missing_weights",
+            "fetchUrl": summary_url,
+            "fetchUrls": fetch_urls,
+            "attempts": attempts,
+            "warnings": warnings,
+            "pcf": {
+                "fundCode": self.fund_code,
+                "basketUnit": str(summary.get("basketUnit") or ""),
+                "basketNav": str(summary.get("basketNav") or ""),
+                "currency": str(summary.get("currency") or ""),
+            },
+        }
+
+
 class OfficialRegistryAdapter:
     name = "official_registry"
     source_label = "Official source registry"
 
-    def build_source_adapter(self, source: dict, code: str = "") -> OfficialEndpointAdapter:
+    def build_source_adapter(self, source: dict, code: str = "") -> OfficialEndpointAdapter | CathayOfficialPcfAdapter:
         url_template = ""
         urls_by_code = source.get("urlsByCode")
         if isinstance(urls_by_code, dict) and code:
@@ -3053,12 +3230,32 @@ class OfficialRegistryAdapter:
             url_template = str(source.get("urlTemplate") or source.get("url") or "").strip()
         if not url_template:
             raise ValueError("Registry source is missing urlTemplate.")
+        data_format = str(source.get("format") or "json").strip().lower()
+        headers = (
+            parse_json_object_env(json.dumps(source.get("headers", {}), ensure_ascii=False))
+            if isinstance(source.get("headers"), dict)
+            else parse_json_object_env(str(source.get("headers", "")))
+        )
+        if data_format == "cathay_pcf":
+            fund_codes_by_code = source.get("fundCodesByCode")
+            if not isinstance(fund_codes_by_code, dict):
+                raise ValueError("Cathay PCF registry source requires fundCodesByCode.")
+            normalized_fund_codes = {
+                normalize_code(str(key)): str(value).strip() for key, value in fund_codes_by_code.items()
+            }
+            fund_code = normalized_fund_codes.get(normalize_code(code), "")
+            if not fund_code:
+                raise ValueError(f"Cathay PCF registry source has no fund code for {code}.")
+            return CathayOfficialPcfAdapter(
+                api_base_url=url_template,
+                fund_code=fund_code,
+                headers=headers,
+                default_as_of=str(source.get("date") or ""),
+            )
         return OfficialEndpointAdapter(
             url_template=url_template,
-            data_format=str(source.get("format") or "json").strip().lower(),
-            headers=parse_json_object_env(json.dumps(source.get("headers", {}), ensure_ascii=False))
-            if isinstance(source.get("headers"), dict)
-            else parse_json_object_env(str(source.get("headers", ""))),
+            data_format=data_format,
+            headers=headers,
             holdings_path=str(source.get("holdingsPath") or ""),
             as_of_path=str(source.get("asOfPath") or ""),
             declared_count_path=str(source.get("declaredCountPath") or ""),
