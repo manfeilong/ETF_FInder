@@ -4,6 +4,32 @@
   "description": "Production official holdings sources. Only enable a source after its publisher, mapping and response have been verified.",
   "sources": [
     {
+      "name": "taishin-official-etf-detail-html",
+      "enabled": true,
+      "status": "active",
+      "publisher": "台新證券投資信託股份有限公司",
+      "authorityType": "issuer",
+      "verifiedAt": "2026-09-12",
+      "priority": 100,
+      "format": "html",
+      "urlTemplate": "https://www.tsit.com.tw/ETF/Home/ETFSeriesDetail/{code}",
+      "codes": [
+        "00703",
+        "00775B",
+        "00851",
+        "00904",
+        "00936",
+        "00947",
+        "00951",
+        "00962",
+        "009805",
+        "00986A",
+        "00987A"
+      ],
+      "expectedCoverage": "partial",
+      "notes": "All 11 official issuer pages were live-probed successfully with 28-232 parsed weighted rows. Coverage remains partial because some pages contain multiple holdings disclosure sections; the bond sample produced a duplicated aggregate weight and needs section-aware parsing before full status."
+    },
+    {
       "name": "fuhwa-official-etf-detail-html",
       "enabled": true,
       "status": "active",
