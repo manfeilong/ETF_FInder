@@ -1,0 +1,4 @@
+code,name,listedDate,status,type,strategy,assetClass,region,distributionType,leverageType,tags
+0050,Yuanta Taiwan 50 ETF,2003-06-30,listed,ETF,passive,equity,tw,distribution,regular,tw50|largecap
+00679B,Yuanta US Treasury Bond ETF,2017-01-17,listed,ETF,passive,bond,us,distribution,regular,bond|ust
+00905,Example Upcoming Active ETF,2026-09-01,upcoming,ETF,active,equity,tw,distribution,regular,active|theme

@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-09-12",
+  "sources": [
+    {
+      "name": "yuanta-official-ratio-html",
+      "enabled": false,
+      "status": "testing",
+      "publisher": "元大證券投資信託股份有限公司",
+      "authorityType": "issuer",
+      "verifiedAt": "2026-09-12",
+      "priority": 10,
+      "codes": ["0050"],
+      "format": "html",
+      "urlTemplate": "https://www.yuantaetfs.com/product/detail/{code}/ratio",
+      "expectedCoverage": "partial"
+    },
+    {
+      "name": "example-official-pcf-csv",
+      "enabled": false,
+      "status": "disabled",
+      "publisher": "Example issuer",
+      "authorityType": "issuer",
+      "verifiedAt": "2026-09-12",
+      "priority": 20,
+      "issuerContains": ["example issuer"],
+      "format": "csv",
+      "expectedCoverage": "full",
+      "urlTemplate": "https://example.com/pcf/{code}?date={date}",
+      "codeField": "stockCode",
+      "nameField": "stockName",
+      "weightField": "weightPct",
+      "sharesField": "shares",
+      "asOfPath": "asOf"
+    },
+    {
+      "name": "example-official-json",
+      "enabled": false,
+      "status": "disabled",
+      "publisher": "Example issuer",
+      "authorityType": "issuer",
+      "verifiedAt": "2026-09-12",
+      "priority": 30,
+      "codes": ["00400A"],
+      "format": "json",
+      "expectedCoverage": "full",
+      "urlTemplate": "https://example.com/api/etfs/{code}/holdings?date={date}",
+      "holdingsPath": "data.rows",
+      "asOfPath": "meta.asOf",
+      "declaredCountPath": "meta.declaredHoldingCount",
+      "codeField": "code",
+      "nameField": "name",
+      "weightField": "weight",
+      "sharesField": "shares"
+    }
+  ]
+}

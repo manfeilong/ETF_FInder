@@ -56,6 +56,7 @@ button {
   margin: 0 auto;
   padding: 28px;
   overflow: hidden;
+  max-width: 100%;
 }
 
 .topbar {
@@ -63,7 +64,15 @@ button {
   align-items: end;
   justify-content: space-between;
   gap: 20px;
+  width: 100%;
+  max-width: 100%;
   margin-bottom: 22px;
+}
+
+.topbar > div,
+.panel-head > div {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .eyebrow,
@@ -80,9 +89,12 @@ h1,
 h2 {
   margin: 0;
   line-height: 1.08;
+  overflow-wrap: anywhere;
 }
 
 h1 {
+  width: 100%;
+  max-width: 100%;
   font-size: 44px;
   letter-spacing: 0;
 }
@@ -96,6 +108,12 @@ h2 {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.status-strip > * {
+  max-width: 100%;
 }
 
 .status-pill,
@@ -120,11 +138,29 @@ h2 {
   cursor: pointer;
 }
 
+.refresh-button.small {
+  min-height: 32px;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.refresh-button.danger {
+  color: var(--rose);
+}
+
 .refresh-button:hover,
 .refresh-button:focus {
   border-color: var(--teal);
   color: var(--teal);
   outline: none;
+}
+
+.refresh-button.danger:hover,
+.refresh-button.danger:focus {
+  border-color: var(--rose);
+  color: var(--rose);
 }
 
 .refresh-button:disabled {
@@ -149,6 +185,7 @@ h2 {
   box-shadow: 0 0 0 5px rgba(184, 111, 0, 0.13);
 }
 
+.status-pill.limited span,
 .status-pill.demo span {
   background: var(--amber);
   box-shadow: 0 0 0 5px rgba(184, 111, 0, 0.13);
@@ -173,6 +210,8 @@ h2 {
   display: grid;
   grid-template-columns: minmax(300px, 370px) minmax(0, 1fr);
   gap: 18px;
+  width: 100%;
+  max-width: 100%;
   align-items: start;
   min-height: 0;
   overflow: hidden;
@@ -180,6 +219,7 @@ h2 {
 
 .selector-panel,
 .panel {
+  min-width: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
@@ -207,6 +247,12 @@ h2 {
 .panel-head.compact {
   min-height: 42px;
   margin-bottom: 14px;
+}
+
+.panel-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .search-box {
@@ -332,6 +378,12 @@ h2 {
 .universe-chip:focus {
   border-color: currentColor;
   outline: none;
+}
+
+.universe-chip.unavailable,
+.search-result.unavailable {
+  cursor: not-allowed;
+  opacity: 0.56;
 }
 
 .universe-chip.missing {
@@ -601,6 +653,132 @@ h2 {
   margin-top: 16px;
   border-top: 1px solid var(--line);
   padding-top: 14px;
+}
+
+.portfolio-manager {
+  margin-top: 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.portfolio-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.portfolio-field {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.portfolio-field input,
+.portfolio-field select {
+  width: 100%;
+  height: 34px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  padding: 0 8px;
+}
+
+.portfolio-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.watchlist-manager {
+  margin-top: 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.watchlist-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.watchlist-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.watch-row {
+  display: grid;
+  grid-template-columns: 1fr 34px;
+  gap: 8px;
+  align-items: start;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfdfc;
+  padding: 8px;
+}
+
+.watch-row-main {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.watch-row-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.watch-row-note {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.watch-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.watch-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.watch-chip.ready {
+  border-color: rgba(38, 115, 77, 0.35);
+  background: rgba(38, 115, 77, 0.12);
+  color: var(--green);
+}
+
+.watch-chip.partial {
+  border-color: rgba(184, 111, 0, 0.4);
+  background: rgba(184, 111, 0, 0.14);
+  color: var(--amber);
+}
+
+.watch-chip.seed,
+.watch-chip.missing {
+  border-color: rgba(184, 58, 75, 0.35);
+  background: rgba(184, 58, 75, 0.12);
+  color: var(--rose);
 }
 
 .meter-row {
@@ -891,6 +1069,7 @@ h2 {
 .slider-field {
   display: grid;
   min-width: min(260px, 42vw);
+  max-width: 100%;
   gap: 7px;
   color: var(--muted);
   font-size: 13px;
@@ -902,7 +1081,8 @@ h2 {
 }
 
 .heatmap {
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: hidden;
   max-width: 100%;
 }
 
@@ -1192,34 +1372,54 @@ h2 {
   font-size: 11px;
 }
 
-.architecture-panel {
+.quality-panel {
   overflow: hidden;
 }
 
-.service-flow {
+.quality-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
   gap: 10px;
   align-items: stretch;
 }
 
-.service-node {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.quality-item {
   min-height: 72px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface-2);
-  color: var(--ink);
-  font-size: 13px;
-  font-weight: 900;
-  line-height: 1.25;
-  text-align: center;
+  padding: 12px;
 }
 
-.flow-arrow {
-  display: none;
+.quality-item span {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.quality-item strong {
+  display: block;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quality-note {
+  grid-column: 1 / -1;
+  margin: 0;
+  border-left: 4px solid var(--amber);
+  border-radius: 8px;
+  background: var(--amber-soft);
+  color: var(--ink);
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.45;
 }
 
 @media (max-width: 1180px) {
@@ -1279,7 +1479,7 @@ h2 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .service-flow {
+  .quality-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1297,13 +1497,35 @@ h2 {
 }
 
 @media (max-width: 520px) {
+  html,
+  body {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  body {
+    overflow-x: hidden;
+  }
+
   .app-shell {
     padding: 14px;
+    width: 100%;
+    max-width: 100%;
   }
 
   .selector-panel,
   .panel {
     padding: 14px;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .workspace-grid,
+  .analysis-layout,
+  .main-grid {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
   }
 
   .metric-row {
@@ -1330,6 +1552,33 @@ h2 {
     grid-template-columns: 1fr;
   }
 
+  .portfolio-actions .refresh-button {
+    flex: 1 1 calc(50% - 4px);
+    justify-content: center;
+  }
+
+  .status-strip {
+    width: 100%;
+  }
+
+  .status-pill,
+  .refresh-button {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .slider-field {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .search-meta,
+  .selected-name,
+  .watch-row-note {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
   .bar-row {
     grid-template-columns: 1fr;
     gap: 6px;
@@ -1343,5 +1592,66 @@ h2 {
 
   .treemap {
     grid-auto-rows: 50px;
+  }
+
+  .history-table-head,
+  .history-table-row {
+    min-width: 0;
+    grid-template-columns: 1fr;
+  }
+
+  .history-table {
+    overflow-x: hidden;
+  }
+
+  .history-table-head {
+    display: none;
+  }
+
+  .history-table-row {
+    gap: 6px;
+  }
+
+  .history-table-row > * {
+    min-width: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .history-table-row > *::before {
+    display: block;
+    margin-bottom: 2px;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 800;
+  }
+
+  .history-table-row > :nth-child(1)::before {
+    content: "日期";
+  }
+
+  .history-table-row > :nth-child(2)::before {
+    content: "增持 Top";
+  }
+
+  .history-table-row > :nth-child(3)::before {
+    content: "減持 Top";
+  }
+
+  .history-table-row > :nth-child(4)::before {
+    content: "新增";
+  }
+
+  .history-table-row > :nth-child(5)::before {
+    content: "移除";
+  }
+
+  .history-table-row > :nth-child(6)::before {
+    content: "換手率";
+  }
+
+  .history-mover-line strong,
+  .history-mover-line span {
+    white-space: normal;
   }
 }

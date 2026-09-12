@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>ETF True Exposure Lab</title>
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="styles.css?v=20260524-mvp5" />
   </head>
   <body>
     <main class="app-shell">
@@ -14,8 +14,9 @@
           <h1>10 檔 ETF 同步交叉比對</h1>
         </div>
         <div class="status-strip" aria-label="資料狀態">
-          <span id="updateStatusPill" class="status-pill manual"><span></span>未接自動日更</span>
+          <span id="updateStatusPill" class="status-pill manual"><span></span>使用快取資料</span>
           <button id="refreshDataBtn" class="refresh-button" type="button">刷新資料</button>
+          <button id="autoSyncToggleBtn" class="refresh-button" type="button">自動刷新：關</button>
           <span id="lastRefreshText" class="status-pill">最新資料日 --</span>
           <span class="status-pill">主動 / 被動 ETF</span>
         </div>
@@ -79,6 +80,50 @@
               <div id="allocationBar" class="meter-fill"></div>
             </div>
           </div>
+
+          <section class="portfolio-manager" aria-label="儲存投資組合">
+            <div class="allocation-head">
+              <span>儲存組合</span>
+              <button id="savePortfolioBtn" class="icon-button" type="button" title="儲存組合" aria-label="儲存組合">存</button>
+            </div>
+            <div class="portfolio-grid">
+              <label class="portfolio-field">
+                <span>名稱</span>
+                <input id="portfolioNameInput" maxlength="60" placeholder="例如：半導體 + 金融" />
+              </label>
+              <label class="portfolio-field">
+                <span>已儲存</span>
+                <select id="portfolioSelect"></select>
+              </label>
+            </div>
+            <div class="portfolio-actions">
+              <button id="loadPortfolioBtn" class="refresh-button small" type="button">載入</button>
+              <button id="deletePortfolioBtn" class="refresh-button small danger" type="button">刪除</button>
+            </div>
+            <p id="portfolioNotice" class="selector-notice" aria-live="polite"></p>
+          </section>
+
+          <section class="watchlist-manager" aria-label="追蹤清單">
+            <div class="allocation-head">
+              <span>追蹤清單</span>
+              <button id="refreshWatchStatusBtn" class="icon-button" type="button" title="刷新狀態" aria-label="刷新狀態">⟳</button>
+            </div>
+            <div class="watchlist-grid">
+              <label class="portfolio-field">
+                <span>ETF</span>
+                <select id="watchlistEtfSelect"></select>
+              </label>
+              <label class="portfolio-field">
+                <span>註記</span>
+                <input id="watchlistNoteInput" maxlength="120" placeholder="例如：等待突破前高" />
+              </label>
+            </div>
+            <div class="portfolio-actions">
+              <button id="addWatchlistBtn" class="refresh-button small" type="button">加入追蹤</button>
+            </div>
+            <div id="watchlistList" class="watchlist-list"></div>
+            <p id="watchlistNotice" class="selector-notice" aria-live="polite"></p>
+          </section>
         </aside>
 
         <section class="main-grid" aria-label="分析結果">
@@ -108,7 +153,11 @@
                   <p class="panel-kicker">True Exposure Matrix</p>
                   <h2>真實權值透視</h2>
                 </div>
-                <span id="riskBadge" class="risk-badge">分散正常</span>
+                <div class="panel-actions">
+                  <span id="riskBadge" class="risk-badge">分散正常</span>
+                  <button id="exportExposureCsvBtn" class="icon-button" type="button" title="匯出 CSV" aria-label="匯出 CSV">匯</button>
+                  <button id="exportExposurePdfBtn" class="icon-button" type="button" title="匯出 PDF" aria-label="匯出 PDF">PDF</button>
+                </div>
               </div>
               <div id="exposureChart" class="bar-chart" aria-label="合併權重前十名"></div>
             </article>
@@ -146,7 +195,7 @@
           <section class="panel history-panel">
             <div class="panel-head compact">
               <div>
-                <p class="panel-kicker">Daily Holding Change</p>
+                <p class="panel-kicker">Holding Change</p>
                 <h2>每日持股變化</h2>
               </div>
               <label class="select-field" for="historyEtfSelect">
@@ -159,29 +208,19 @@
             <div id="historyTable" class="history-table" aria-label="近月每日持股變化"></div>
           </section>
 
-          <section class="panel architecture-panel">
+          <section class="panel quality-panel">
             <div class="panel-head compact">
               <div>
-                <p class="panel-kicker">Service Blueprint</p>
-                <h2>前後端分離資料流</h2>
+                <p class="panel-kicker">Data Quality</p>
+                <h2>資料品質</h2>
               </div>
             </div>
-            <div class="service-flow" aria-label="微服務資料流">
-              <div class="service-node">Next.js UI</div>
-              <div class="flow-arrow">→</div>
-              <div class="service-node">FastAPI<br />Exposure API</div>
-              <div class="flow-arrow">→</div>
-              <div class="service-node">Redis<br />Daily Cache</div>
-              <div class="flow-arrow">→</div>
-              <div class="service-node">PostgreSQL<br />Holdings History</div>
-              <div class="flow-arrow">→</div>
-              <div class="service-node">PCF / TWSE<br />Collectors</div>
-            </div>
+            <div id="qualityPanel" class="quality-grid" aria-label="目前資料品質"></div>
           </section>
         </section>
       </section>
     </main>
 
-    <script src="app.js"></script>
+    <script src="app.js?v=20260524-mvp5"></script>
   </body>
 </html>
