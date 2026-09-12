@@ -289,7 +289,7 @@ def load_official_source_registry() -> dict:
     return payload
 
 
-REGISTRY_FORMATS = {"json", "csv", "html", "cathay_pcf"}
+REGISTRY_FORMATS = {"json", "csv", "html", "cathay_pcf", "ctbc_html"}
 REGISTRY_AUTHORITY_TYPES = {"issuer", "exchange", "regulator"}
 REGISTRY_SOURCE_STATUSES = {"active", "testing", "disabled", "deprecated"}
 
@@ -358,7 +358,7 @@ def validate_official_source_registry(registry: dict, universe: list[dict]) -> d
 
         data_format = str(source.get("format") or "").strip().lower()
         if data_format not in REGISTRY_FORMATS:
-            source_issues.append("format must be json, csv, html, or cathay_pcf")
+            source_issues.append("format must be json, csv, html, cathay_pcf, or ctbc_html")
         expected_coverage = str(source.get("expectedCoverage") or "").strip().lower()
         if expected_coverage not in {"full", "partial"}:
             source_issues.append("expectedCoverage must be full or partial")
@@ -2251,16 +2251,20 @@ def normalize_endpoint_rows(
     return holdings, details
 
 
-OFFICIAL_HTML_CODE_LABELS = {"商品代碼", "股票代碼", "股票代號", "債券代碼", "債券代號", "代號", "Code"}
-OFFICIAL_HTML_NAME_LABELS = {"商品名稱", "股票名稱", "債券名稱", "名稱", "Name"}
-OFFICIAL_HTML_SHARES_LABELS = {"商品數量", "股數", "數量", "持有數", "面額", "Qty", "Quantity"}
-OFFICIAL_HTML_WEIGHT_LABELS = {"商品權重", "權重", "持股比重", "持股權重", "持股權重(%)", "Weight"}
+OFFICIAL_HTML_CODE_LABELS = {
+    "商品代碼", "股票代碼", "股票代號", "債券代碼", "債券代號", "期貨代碼", "代號", "Code"
+}
+OFFICIAL_HTML_NAME_LABELS = {"商品名稱", "股票名稱", "債券名稱", "期貨名稱", "名稱", "Name"}
+OFFICIAL_HTML_SHARES_LABELS = {"商品數量", "股數", "口數", "數量", "持有數", "面額", "Qty", "Quantity"}
+OFFICIAL_HTML_WEIGHT_LABELS = {
+    "商品權重", "權重", "權重(%)", "持股比重", "持股權重", "持股權重(%)", "Weight"
+}
 OFFICIAL_HTML_ALL_LABELS = (
     OFFICIAL_HTML_CODE_LABELS
     | OFFICIAL_HTML_NAME_LABELS
     | OFFICIAL_HTML_SHARES_LABELS
     | OFFICIAL_HTML_WEIGHT_LABELS
-    | {"商品年月", "交易日期", "交易日期:"}
+    | {"商品年月", "交易日期", "交易日期:", "資料日期", "資料日期:", "公告日期", "公告日期:"}
 )
 
 
@@ -2308,8 +2312,8 @@ def find_labeled_value_until_next_code(lines: list[str], start: int, labels: set
 def extract_official_html_as_of(lines: list[str], fallback_date: str) -> str:
     for index, line in enumerate(lines):
         normalized = normalize_html_label(line)
-        if normalized == "交易日期":
-            candidate = value_after_html_label(lines, index, {"交易日期"})
+        if normalized in {"交易日期", "資料日期", "公告日期"}:
+            candidate = value_after_html_label(lines, index, {normalized})
             normalized_date = safe_import_date(candidate)
             if normalized_date:
                 return normalized_date
@@ -2376,7 +2380,8 @@ def is_official_holding_identifier(value: str) -> bool:
     return bool(
         CODE_PATTERN.fullmatch(identifier)
         or re.fullmatch(r"[A-Z]{2}[A-Z0-9]{10}", identifier)
-        or re.fullmatch(r"[A-Z0-9][A-Z0-9./-]{0,15} [A-Z]{1,4}", identifier)
+        or re.fullmatch(r"[A-Z0-9][A-Z0-9./-]{0,15}(?: [A-Z0-9]{1,8}){1,2}", identifier)
+        or re.fullmatch(r"[A-Z]{1,6}", identifier)
     )
 
 
@@ -2385,45 +2390,56 @@ def extract_official_html_table_holdings(markup: str) -> tuple[dict[str, float],
     extractor.feed(markup)
     holdings: dict[str, float] = {}
     details_by_code: dict[str, dict] = {}
+    code_headers = {
+        normalize_official_table_header(value) for value in OFFICIAL_HTML_CODE_LABELS
+    }
+    name_headers = {
+        normalize_official_table_header(value) for value in OFFICIAL_HTML_NAME_LABELS
+    }
+    shares_headers = {
+        normalize_official_table_header(value) for value in OFFICIAL_HTML_SHARES_LABELS
+    }
+    weight_headers = {
+        normalize_official_table_header(value) for value in OFFICIAL_HTML_WEIGHT_LABELS
+    }
     for table in extractor.tables:
-        header_text = " ".join(cell for row in table[:3] for cell in row)
-        normalized_header = normalize_official_table_header(header_text)
-        has_code_header = any(token in normalized_header for token in {"商品代碼", "股票代碼", "股票代號", "債券代碼", "code"})
-        has_weight_header = any(token in normalized_header for token in {"商品權重", "持股權重", "持股比重", "weight"})
-        if not has_code_header or not has_weight_header:
+        header_row_index = -1
+        code_index = -1
+        weight_index = -1
+        name_index = -1
+        shares_index = -1
+        for row_index, row in enumerate(table[:5]):
+            normalized_cells = [normalize_official_table_header(cell) for cell in row]
+            row_code_index = next((i for i, value in enumerate(normalized_cells) if value in code_headers), -1)
+            row_weight_index = next((i for i, value in enumerate(normalized_cells) if value in weight_headers), -1)
+            if row_code_index < 0 or row_weight_index < 0:
+                continue
+            header_row_index = row_index
+            code_index = row_code_index
+            weight_index = row_weight_index
+            name_index = next((i for i, value in enumerate(normalized_cells) if value in name_headers), -1)
+            shares_index = next((i for i, value in enumerate(normalized_cells) if value in shares_headers), -1)
+            break
+        if header_row_index < 0:
             continue
-        for row in table:
-            holding_index = next(
-                (
-                    index
-                    for index, cell in enumerate(row)
-                    if is_official_holding_identifier(cell)
-                ),
-                -1,
-            )
-            if holding_index < 0:
+        for row in table[header_row_index + 1:]:
+            if code_index >= len(row) or weight_index >= len(row):
                 continue
-            holding_code = normalize_official_holding_identifier(row[holding_index])
-            weight_index = next(
-                (
-                    index
-                    for index in range(holding_index + 1, len(row))
-                    if str(row[index]).strip().endswith(("%", "％"))
-                ),
-                -1,
-            )
-            if weight_index < 0:
+            if not is_official_holding_identifier(row[code_index]):
                 continue
+            holding_code = normalize_official_holding_identifier(row[code_index])
             try:
                 weight = parse_weight_value(row[weight_index])
             except (TypeError, ValueError):
                 continue
             name = holding_code
-            if holding_index + 1 < weight_index:
-                name = str(row[holding_index + 1] or holding_code).strip() or holding_code
-            shares = ""
-            if weight_index + 1 < len(row):
-                shares = re.sub(r"[^0-9.-]", "", str(row[weight_index + 1]))
+            if 0 <= name_index < len(row):
+                name = str(row[name_index] or holding_code).strip() or holding_code
+            shares = (
+                re.sub(r"[^0-9.+-]", "", str(row[shares_index]))
+                if 0 <= shares_index < len(row)
+                else ""
+            )
             holdings[holding_code] = weight
             details_by_code[holding_code] = {
                 "code": holding_code,
@@ -2433,6 +2449,34 @@ def extract_official_html_table_holdings(markup: str) -> tuple[dict[str, float],
                 "price": "",
             }
     return holdings, list(details_by_code.values())
+
+
+def count_official_html_security_rows(markup: str) -> int:
+    """Count rows in tables that explicitly declare both security-code and weight columns."""
+    extractor = HTMLTableExtractor()
+    extractor.feed(markup)
+    code_headers = {normalize_official_table_header(value) for value in OFFICIAL_HTML_CODE_LABELS}
+    weight_headers = {normalize_official_table_header(value) for value in OFFICIAL_HTML_WEIGHT_LABELS}
+    count = 0
+    for table in extractor.tables:
+        header_row_index = -1
+        code_index = -1
+        weight_index = -1
+        for row_index, row in enumerate(table[:5]):
+            normalized_cells = [normalize_official_table_header(cell) for cell in row]
+            code_index = next((i for i, value in enumerate(normalized_cells) if value in code_headers), -1)
+            weight_index = next((i for i, value in enumerate(normalized_cells) if value in weight_headers), -1)
+            if code_index >= 0 and weight_index >= 0:
+                header_row_index = row_index
+                break
+        if header_row_index < 0:
+            continue
+        for row in table[header_row_index + 1:]:
+            if code_index >= len(row) or weight_index >= len(row):
+                continue
+            if str(row[code_index]).strip() and str(row[weight_index]).strip():
+                count += 1
+    return count
 
 
 def normalize_official_security_name(value: str) -> str:
@@ -3216,6 +3260,49 @@ class CathayOfficialPcfAdapter:
         }
 
 
+class CtbcOfficialHoldingsAdapter(OfficialEndpointAdapter):
+    """Parse CTBC's dated full-fund asset tables with row-count verification."""
+
+    name = "ctbc_official_holdings"
+    source_label = "CTBC official fund assets"
+
+    def __init__(
+        self,
+        url_template: str,
+        headers: dict[str, str] | None = None,
+        default_as_of: str | None = None,
+    ) -> None:
+        super().__init__(
+            url_template=url_template,
+            data_format="html",
+            headers=headers,
+            default_as_of=default_as_of,
+        )
+
+    def fetch_one(self, code: str) -> dict:
+        url = self.build_url(code)
+        parsed_url = urlparse(url)
+        if not parsed_url.hostname or not parsed_url.hostname.lower().endswith("ctbcinvestments.com.tw"):
+            raise RuntimeError("CTBC holdings adapter requires an official ctbcinvestments.com.tw URL.")
+        markup, attempts = get_url_with_retry(url=url, headers=self.headers)
+        if "基金資產" not in markup or not re.search(r'id=["\']Table_(?:STOCK|BOND|FUTURE)["\']', markup, re.I):
+            raise RuntimeError(f"CTBC page does not expose recognized fund-asset tables for {code}.")
+        parsed = self.parse_html_payload(code=code, markup=markup, fetch_url=url)
+        declared_count = count_official_html_security_rows(markup)
+        parsed_count = int(parsed.get("parsedHoldingCount") or 0)
+        if declared_count <= 0 or parsed_count != declared_count:
+            raise RuntimeError(
+                f"CTBC fund-asset row verification failed for {code}: "
+                f"declared {declared_count}, parsed {parsed_count}."
+            )
+        parsed["declaredHoldingCount"] = declared_count
+        parsed["coverage"] = "full"
+        parsed["adapter"] = self.name
+        parsed["source"] = self.source_label
+        parsed["attempts"] = attempts
+        return parsed
+
+
 class OfficialRegistryAdapter:
     name = "official_registry"
     source_label = "Official source registry"
@@ -3251,6 +3338,12 @@ class OfficialRegistryAdapter:
                 fund_code=fund_code,
                 headers=headers,
                 default_as_of=str(source.get("date") or ""),
+            )
+        if data_format == "ctbc_html":
+            return CtbcOfficialHoldingsAdapter(
+                url_template=url_template,
+                headers=headers,
+                default_as_of=str(source.get("date") or OFFICIAL_ENDPOINT_DATE or time.strftime("%Y-%m-%d")),
             )
         return OfficialEndpointAdapter(
             url_template=url_template,

@@ -903,6 +903,60 @@ class ServerLogicTests(unittest.TestCase):
         self.assertAlmostEqual(parsed["holdings"]["2881"], 14.97, places=4)
         self.assertEqual(parsed["holdingDetails"][0]["shares"], "611770000")
 
+    def test_parse_ctbc_asset_tables_with_plain_weights_and_futures(self):
+        markup = """
+        <div>基金資產</div>
+        <table><tr><td>資料日期:</td><td>2026/09/11</td></tr></table>
+        <table id="Table_STOCK">
+          <tr><th>股票代碼</th><th>股票名稱</th><th>股數</th><th>權重(%)</th></tr>
+          <tr><td>2330</td><td>台積電</td><td>11,130,000.00</td><td>40.58</td></tr>
+          <tr><td>ASML NA</td><td>艾司摩爾</td><td>14,700.00</td><td>7.04</td></tr>
+          <tr><td>006400 KS Equity</td><td>三星電管</td><td>22,480.00</td><td>9.65</td></tr>
+        </table>
+        <table id="Table_FUTURE">
+          <tr><th>期貨代碼</th><th>期貨名稱</th><th>口數</th><th>權重(%)</th></tr>
+          <tr><td>TX</td><td>臺股期貨</td><td>5.00</td><td>0.07</td></tr>
+        </table>
+        """
+        parsed = server.parse_official_html_labeled_holdings(
+            code="00891",
+            markup=markup,
+            fetch_url="https://www.ctbcinvestments.com.tw/example",
+            fallback_date="2026-09-12",
+            source_label="CTBC official page",
+        )
+        self.assertEqual(parsed["asOf"], "2026-09-11")
+        self.assertEqual(parsed["parsedHoldingCount"], 4)
+        self.assertEqual(server.count_official_html_security_rows(markup), 4)
+        self.assertAlmostEqual(parsed["holdings"]["ASML NA"], 7.04, places=4)
+        self.assertAlmostEqual(parsed["holdings"]["006400 KS EQUITY"], 9.65, places=4)
+        self.assertAlmostEqual(parsed["holdings"]["TX"], 0.07, places=4)
+        stock = next(row for row in parsed["holdingDetails"] if row["code"] == "2330")
+        self.assertEqual(stock["shares"], "11130000.00")
+
+    def test_ctbc_official_adapter_marks_full_only_after_row_verification(self):
+        markup = """
+        <div>基金資產</div><div>資料日期: 2026/09/11</div>
+        <table id="Table_STOCK">
+          <tr><th>股票代碼</th><th>股票名稱</th><th>股數</th><th>權重(%)</th></tr>
+          <tr><td>2330</td><td>台積電</td><td>100</td><td>60.5</td></tr>
+          <tr><td>2454</td><td>聯發科</td><td>50</td><td>39.5</td></tr>
+        </table>
+        """
+        adapter = server.CtbcOfficialHoldingsAdapter(
+            "https://www.ctbcinvestments.com.tw/CTWEB/Content/ETF/pcd.aspx?ETF_ID={code}"
+        )
+        original_get_url = server.get_url_with_retry
+        try:
+            server.get_url_with_retry = lambda **kwargs: (markup, 1)
+            payload = adapter.fetch_one("00891")
+        finally:
+            server.get_url_with_retry = original_get_url
+        self.assertEqual(payload["coverage"], "full")
+        self.assertEqual(payload["declaredHoldingCount"], 2)
+        self.assertEqual(payload["parsedHoldingCount"], 2)
+        self.assertEqual(payload["adapter"], "ctbc_official_holdings")
+
     def test_parse_official_html_flat_responsive_holdings(self):
         markup = """
         <div>股票</div>
