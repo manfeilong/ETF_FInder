@@ -289,7 +289,7 @@ def load_official_source_registry() -> dict:
     return payload
 
 
-REGISTRY_FORMATS = {"json", "csv", "html", "cathay_pcf", "ctbc_html"}
+REGISTRY_FORMATS = {"json", "csv", "html", "cathay_pcf", "ctbc_html", "nomura_pcf"}
 REGISTRY_AUTHORITY_TYPES = {"issuer", "exchange", "regulator"}
 REGISTRY_SOURCE_STATUSES = {"active", "testing", "disabled", "deprecated"}
 
@@ -358,7 +358,7 @@ def validate_official_source_registry(registry: dict, universe: list[dict]) -> d
 
         data_format = str(source.get("format") or "").strip().lower()
         if data_format not in REGISTRY_FORMATS:
-            source_issues.append("format must be json, csv, html, cathay_pcf, or ctbc_html")
+            source_issues.append("format must be json, csv, html, cathay_pcf, ctbc_html, or nomura_pcf")
         expected_coverage = str(source.get("expectedCoverage") or "").strip().lower()
         if expected_coverage not in {"full", "partial"}:
             source_issues.append("expectedCoverage must be full or partial")
@@ -2074,6 +2074,40 @@ def get_url_with_retry(
     raise RuntimeError(f"Failed to fetch URL after {attempts} attempts: {last_error}") from last_error
 
 
+def post_json_with_retry(
+    url: str,
+    payload: dict,
+    timeout: int = LIVE_FETCH_TIMEOUT_SECONDS,
+    retries: int = LIVE_FETCH_RETRIES,
+    backoff_ms: int = LIVE_FETCH_BACKOFF_MS,
+    headers: dict[str, str] | None = None,
+) -> tuple[object, int]:
+    request_headers = {
+        "User-Agent": "Mozilla/5.0 ETF True Exposure Lab data refresh",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    if headers:
+        request_headers.update(headers)
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    attempts = max(1, retries + 1)
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            request = urllib.request.Request(url, data=body, headers=request_headers, method="POST")
+            with open_url_with_same_origin_308(request, timeout=timeout) as response:
+                charset = response.headers.get_content_charset() or "utf-8"
+                raw_response = response.read().decode(charset, errors="replace")
+            return json.loads(raw_response), attempt
+        except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+            last_error = exc
+            if attempt >= attempts:
+                break
+            if backoff_ms > 0:
+                time.sleep(backoff_ms / 1000)
+    raise RuntimeError(f"Failed to post JSON after {attempts} attempts: {last_error}") from last_error
+
+
 class HoldingsAdapter(Protocol):
     name: str
     source_label: str
@@ -2140,7 +2174,7 @@ def normalize_snapshot_as_of(raw_as_of: object) -> str:
 
 
 def parse_weight_value(raw_weight: object) -> float:
-    text = str(raw_weight or "").strip().replace(",", "")
+    text = str("" if raw_weight is None else raw_weight).strip().replace(",", "")
     if text.endswith("%"):
         text = text[:-1].strip()
     value = float(text)
@@ -3262,6 +3296,147 @@ class CathayOfficialPcfAdapter:
         }
 
 
+class NomuraOfficialPcfAdapter:
+    """Read Nomura's official, dated PCF API with per-row integrity checks."""
+
+    name = "nomura_official_pcf"
+    source_label = "Nomura official PCF API"
+    asset_fields = {
+        "Stocks": ("stock", "CStockCode", "CStockName", "CQuantity", "CWeightsPct"),
+        "Bonds": ("bond", "CBondCode", "CBondName", "CBalParValue", "CHoldRatio"),
+        "Etfs": ("etf", "CStockCode", "CStockName", "CQuantity", "CWeightsPct"),
+        "Futures": ("future", "CFuturesCode", "CFuturesName", "CQuantity", "CWeightsPct"),
+        "Options": ("option", "COptionCode", "COptionName", "CQuantity", "CWeightsPct"),
+    }
+
+    def __init__(
+        self,
+        api_base_url: str,
+        headers: dict[str, str] | None = None,
+        default_as_of: str | None = None,
+    ) -> None:
+        self.api_base_url = str(api_base_url or "").strip().rstrip("/")
+        self.headers = headers or {}
+        self.default_as_of = str(default_as_of or "").strip()
+        parsed_url = urlparse(self.api_base_url)
+        if parsed_url.scheme != "https" or not parsed_url.hostname:
+            raise ValueError("Nomura PCF API base URL must be an absolute HTTPS URL.")
+
+    def post_api(self, endpoint: str, payload: dict) -> tuple[object, str, int]:
+        url = f"{self.api_base_url}/{endpoint}"
+        response, attempts = post_json_with_retry(url=url, payload=payload, headers=self.headers)
+        if not isinstance(response, dict):
+            raise RuntimeError(f"Nomura {endpoint} returned a non-object payload.")
+        if str(response.get("StatusCode")) != "0":
+            message = str(response.get("Message") or "unknown API error").strip()
+            raise RuntimeError(f"Nomura {endpoint} failed ({response.get('StatusCode')}): {message}")
+        return response.get("Entries"), url, attempts
+
+    @staticmethod
+    def request_payload(code: str, request_date: str) -> dict:
+        return {"Type": 1, "Keyword": "", "FundNo": normalize_code(code), "Date": request_date}
+
+    @staticmethod
+    def row_identifier(row: dict, asset_type: str, code_field: str) -> str:
+        identifier = str(row.get(code_field) or "").strip().upper()
+        if not identifier:
+            return ""
+        contract_month = str(row.get("CContractYm") or "").strip()
+        if asset_type in {"future", "option"}:
+            return f"{asset_type.upper()}:{identifier}:{contract_month}" if contract_month else f"{asset_type.upper()}:{identifier}"
+        return identifier
+
+    def fetch_one(self, code: str) -> dict:
+        normalized_code = normalize_code(code)
+        fetch_urls: list[str] = []
+        attempts = 0
+        if self.default_as_of:
+            latest_date = self.default_as_of.replace("-", "/")
+        else:
+            date_request = self.request_payload(normalized_code, time.strftime("%Y-%m-%d"))
+            date_entries, date_url, date_attempts = self.post_api("Fund/GetFundTradeInfoDate", date_request)
+            attempts += date_attempts
+            fetch_urls.append(date_url)
+            if not isinstance(date_entries, dict):
+                raise RuntimeError("Nomura date endpoint returned no entries.")
+            latest_date = str(date_entries.get("LatestDate") or "").strip()
+        if not latest_date:
+            raise RuntimeError(f"Nomura PCF returned no available date for {normalized_code}.")
+
+        trade_request = self.request_payload(normalized_code, latest_date)
+        entries, trade_url, trade_attempts = self.post_api("Fund/GetFundTradeInfo", trade_request)
+        attempts += trade_attempts
+        fetch_urls.append(trade_url)
+        if not isinstance(entries, dict):
+            raise RuntimeError("Nomura trade-info endpoint returned no entries.")
+        response_code = normalize_code(str(entries.get("CFundId") or normalized_code))
+        if response_code and response_code != normalized_code:
+            raise RuntimeError(f"Nomura PCF code mismatch: expected {normalized_code}, got {response_code}.")
+
+        raw_as_of = str(entries.get("CPcfdate") or latest_date).strip().replace("/", "-")
+        if re.fullmatch(r"\d{8}", raw_as_of):
+            raw_as_of = f"{raw_as_of[:4]}-{raw_as_of[4:6]}-{raw_as_of[6:8]}"
+        elif re.match(r"^\d{4}-\d{2}-\d{2}T", raw_as_of):
+            raw_as_of = raw_as_of[:10]
+        as_of = normalize_snapshot_as_of(raw_as_of)
+        holdings: dict[str, float] = {}
+        details: list[dict] = []
+        declared_count = 0
+        for collection, fields in self.asset_fields.items():
+            asset_type, code_field, name_field, shares_field, weight_field = fields
+            rows = entries.get(collection, [])
+            if rows is None:
+                rows = []
+            if not isinstance(rows, list):
+                raise RuntimeError(f"Nomura {collection} must be an array.")
+            declared_count += len(rows)
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                identifier = self.row_identifier(row, asset_type, code_field)
+                try:
+                    weight = parse_weight_value(row.get(weight_field))
+                except (TypeError, ValueError):
+                    continue
+                if not identifier:
+                    continue
+                if identifier in holdings:
+                    identifier = f"{asset_type.upper()}:{identifier}"
+                holdings[identifier] = weight
+                detail = {
+                    "code": identifier,
+                    "name": str(row.get(name_field) or identifier).strip(),
+                    "weight": weight,
+                    "shares": str(row.get(shares_field) if row.get(shares_field) is not None else ""),
+                    "price": str(row.get("CPrice") if row.get("CPrice") is not None else ""),
+                    "assetType": asset_type,
+                }
+                if row.get("CMarketValue") is not None:
+                    detail["marketValue"] = str(row.get("CMarketValue"))
+                details.append(detail)
+
+        parsed_count = len(holdings)
+        if declared_count <= 0 or parsed_count != declared_count:
+            raise RuntimeError(
+                f"Nomura PCF row verification failed for {normalized_code}: "
+                f"declared {declared_count}, parsed {parsed_count}."
+            )
+        return {
+            "code": normalized_code,
+            "source": self.source_label,
+            "adapter": self.name,
+            "asOf": as_of,
+            "holdings": holdings,
+            "holdingDetails": details,
+            "declaredHoldingCount": declared_count,
+            "parsedHoldingCount": parsed_count,
+            "coverage": "full",
+            "fetchUrl": trade_url,
+            "fetchUrls": fetch_urls,
+            "attempts": attempts,
+        }
+
+
 class CtbcOfficialHoldingsAdapter(OfficialEndpointAdapter):
     """Parse CTBC's dated full-fund asset tables with row-count verification."""
 
@@ -3309,7 +3484,9 @@ class OfficialRegistryAdapter:
     name = "official_registry"
     source_label = "Official source registry"
 
-    def build_source_adapter(self, source: dict, code: str = "") -> OfficialEndpointAdapter | CathayOfficialPcfAdapter:
+    def build_source_adapter(
+        self, source: dict, code: str = ""
+    ) -> OfficialEndpointAdapter | CathayOfficialPcfAdapter | NomuraOfficialPcfAdapter:
         url_template = ""
         urls_by_code = source.get("urlsByCode")
         if isinstance(urls_by_code, dict) and code:
@@ -3346,6 +3523,12 @@ class OfficialRegistryAdapter:
                 url_template=url_template,
                 headers=headers,
                 default_as_of=str(source.get("date") or OFFICIAL_ENDPOINT_DATE or time.strftime("%Y-%m-%d")),
+            )
+        if data_format == "nomura_pcf":
+            return NomuraOfficialPcfAdapter(
+                api_base_url=url_template,
+                headers=headers,
+                default_as_of=str(source.get("date") or ""),
             )
         return OfficialEndpointAdapter(
             url_template=url_template,
