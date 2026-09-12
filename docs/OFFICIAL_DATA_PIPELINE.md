@@ -38,6 +38,8 @@ CTBC's dated fund-asset pages use `format: "ctbc_html"`. This dedicated parser s
 
 Fuhwa detail pages use internal IDs such as `ETF01` and `ETF22`, so the registry maps each listed code with `urlsByCode`. The shared HTML parser recognizes the issuer's `證券代號` and `期貨代號` tables. These mappings remain partial until a live row-count probe succeeds; scheduled issuer maintenance is not treated as evidence of complete coverage.
 
+Taishin product URLs accept the listed ETF code directly and expose weighted holdings on the official product page. Keep these sources partial until parsing is scoped to a single disclosure section: some pages contain both portfolio and PCF-related tables, and aggregating both can duplicate bond weights.
+
 Enable strict completeness gate for official snapshots:
 
 ```powershell
