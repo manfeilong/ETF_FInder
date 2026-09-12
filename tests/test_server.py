@@ -1392,6 +1392,68 @@ class ServerLogicTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["coverage"]["productionReadyListedCount"], 1)
 
+    def test_mega_official_pcf_adapter_posts_fund_id_and_verifies_table_rows(self):
+        adapter = server.MegaOfficialPcfAdapter(
+            page_url="https://www.megafunds.com.tw/MEGA/etf/trade_pcf.aspx",
+            fund_id="16",
+        )
+        markup = """
+        <p>（股票代號：00911 簡稱：兆豐洲際半導體）</p>
+        <h2>2026/09/11</h2><p>現金</p><p>申購買回清單公告</p>
+        <table>
+          <tr><th>股票代號</th><th>股票名稱</th><th>股數</th><th>持股權重</th></tr>
+          <tr><td>NVDA US</td><td>NVIDIA</td><td>22,192</td><td>9.13%</td></tr>
+          <tr><td>MU US</td><td>MICRON</td><td>4,828</td><td>8.89%</td></tr>
+        </table>
+        <div>ASTERA LABS INC 4,070 2.18%</div>
+        """
+        requested_codes = []
+        adapter.fetch_html = lambda code: (requested_codes.append(code) or markup, 1)
+
+        payload = adapter.fetch_one("00911")
+
+        self.assertEqual(requested_codes, ["00911"])
+        self.assertEqual(payload["asOf"], "2026-09-11")
+        self.assertEqual(payload["declaredHoldingCount"], 2)
+        self.assertEqual(payload["parsedHoldingCount"], 2)
+        self.assertEqual(payload["coverage"], "full")
+        self.assertEqual(payload["holdings"], {"NVDA US": 9.13, "MU US": 8.89})
+
+    def test_official_registry_builds_mega_pcf_adapter_from_fund_id_mapping(self):
+        source = {
+            "enabled": True,
+            "format": "mega_pcf",
+            "url": "https://www.megafunds.com.tw/MEGA/etf/trade_pcf.aspx",
+            "fundIdsByCode": {"00690": "5", "00911": "16"},
+        }
+        self.assertTrue(server.official_registry_source_matches(source, "00911", None))
+        adapter = server.OfficialRegistryAdapter().build_source_adapter(source, code="00911")
+        self.assertIsInstance(adapter, server.MegaOfficialPcfAdapter)
+        self.assertEqual(adapter.fund_id, "16")
+
+    def test_validate_official_source_registry_accepts_mega_fund_id_mapping(self):
+        universe = [{"code": "00690", "name": "ETF A", "issuer": "Mega", "status": "listed"}]
+        registry = {
+            "schemaVersion": 1,
+            "sources": [
+                {
+                    "name": "mega-official",
+                    "enabled": True,
+                    "status": "active",
+                    "publisher": "Mega",
+                    "authorityType": "issuer",
+                    "verifiedAt": "2026-09-12",
+                    "format": "mega_pcf",
+                    "expectedCoverage": "full",
+                    "url": "https://www.megafunds.com.tw/MEGA/etf/trade_pcf.aspx",
+                    "fundIdsByCode": {"00690": "5"},
+                }
+            ],
+        }
+        result = server.validate_official_source_registry(registry, universe)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["coverage"]["productionReadyListedCount"], 1)
+
     def test_append_and_read_refresh_alerts(self):
         original_file = server.ALERTS_FILE
         with tempfile.TemporaryDirectory() as tmp_dir:
