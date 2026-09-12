@@ -4,6 +4,32 @@
   "description": "Production official holdings sources. Only enable a source after its publisher, mapping and response have been verified.",
   "sources": [
     {
+      "name": "fuhwa-official-etf-detail-html",
+      "enabled": true,
+      "status": "active",
+      "publisher": "復華證券投資信託股份有限公司",
+      "authorityType": "issuer",
+      "verifiedAt": "2026-09-12",
+      "priority": 100,
+      "format": "html",
+      "urlsByCode": {
+        "00409A": "https://www.fhtrust.com.tw/ETF/etf_detail/ETF26",
+        "006207": "https://www.fhtrust.com.tw/ETF/etf_detail/ETF01",
+        "00650L": "https://www.fhtrust.com.tw/ETF/etf_detail/ETF02",
+        "00651R": "https://www.fhtrust.com.tw/ETF/etf_detail/ETF03",
+        "00710B": "https://www.fhtrust.com.tw/ETF/etf_detail/ETF05",
+        "00711B": "https://www.fhtrust.com.tw/ETF/etf_detail/ETF06",
+        "00712": "https://www.fhtrust.com.tw/ETF/etf_detail/ETF07",
+        "00731": "https://www.fhtrust.com.tw/ETF/etf_detail/ETF08",
+        "00924": "https://www.fhtrust.com.tw/ETF/etf_detail/ETF20",
+        "00929": "https://www.fhtrust.com.tw/ETF/etf_detail/ETF21",
+        "00949": "https://www.fhtrust.com.tw/ETF/etf_detail/ETF22",
+        "00991A": "https://www.fhtrust.com.tw/ETF/etf_detail/ETF23"
+      },
+      "expectedCoverage": "partial",
+      "notes": "Official per-fund detail pages expose dated fund assets and PCF tables with security or futures identifiers, quantities, amounts and weights. Source mapping is traceable, but remains partial until live row-count verification can be completed after the issuer's scheduled 2026-09-12 site maintenance."
+    },
+    {
       "name": "ctbc-official-fund-assets-html",
       "enabled": true,
       "status": "active",

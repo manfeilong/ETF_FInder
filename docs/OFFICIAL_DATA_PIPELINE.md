@@ -36,6 +36,8 @@ Cathay's issuer API uses `format: "cathay_pcf"` together with `url` and `fundCod
 
 CTBC's dated fund-asset pages use `format: "ctbc_html"`. This dedicated parser supports plain numeric weights, overseas symbols and futures tables, checks that every declared security row was parsed, and only then emits `coverage: "full"`. Codes that have not passed the same live row-count check stay in a separate ordinary `html` source with partial coverage.
 
+Fuhwa detail pages use internal IDs such as `ETF01` and `ETF22`, so the registry maps each listed code with `urlsByCode`. The shared HTML parser recognizes the issuer's `證券代號` and `期貨代號` tables. These mappings remain partial until a live row-count probe succeeds; scheduled issuer maintenance is not treated as evidence of complete coverage.
+
 Enable strict completeness gate for official snapshots:
 
 ```powershell
