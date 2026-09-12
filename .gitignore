@@ -1,0 +1,28 @@
+# Python bytecode and test caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local environments and secrets
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+
+# Editor and operating-system files
+.DS_Store
+Thumbs.db
+*.swp
+
+# Local script backups
+scripts/*.bak-*
+
+# Runtime logs and user-specific state
+data/access-log*.jsonl
+data/refresh-alerts*.jsonl
+data/portfolios.json
+data/watchlist.json
+data/history-quality-latest.json
