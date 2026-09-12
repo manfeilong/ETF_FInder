@@ -40,6 +40,8 @@ Fuhwa detail pages use internal IDs such as `ETF01` and `ETF22`, so the registry
 
 Taishin product URLs accept the listed ETF code directly and expose weighted holdings on the official product page. Keep these sources partial until parsing is scoped to a single disclosure section: some pages contain both portfolio and PCF-related tables, and aggregating both can duplicate bond weights.
 
+Nomura's ETFWEB PCF application uses `format: "nomura_pcf"` with the issuer API base URL. The dedicated adapter first resolves the latest available PCF date, then combines stock, bond, ETF, futures and option arrays. It verifies the response fund code and requires every declared row to have an identifier and numeric weight before emitting `coverage: "full"`; a missing or malformed row fails the fetch instead of silently downgrading integrity.
+
 Enable strict completeness gate for official snapshots:
 
 ```powershell
