@@ -4,6 +4,58 @@
   "description": "Production official holdings sources. Only enable a source after its publisher, mapping and response have been verified.",
   "sources": [
     {
+      "name": "ctbc-official-fund-assets-html",
+      "enabled": true,
+      "status": "active",
+      "publisher": "中國信託證券投資信託股份有限公司",
+      "authorityType": "issuer",
+      "verifiedAt": "2026-09-12",
+      "priority": 50,
+      "format": "ctbc_html",
+      "urlTemplate": "https://www.ctbcinvestments.com.tw/CTWEB/Content/ETF/pcd.aspx?ETF_ID={code}",
+      "codes": [
+        "00406A",
+        "00752",
+        "00753L",
+        "00882",
+        "00891",
+        "00894",
+        "00896",
+        "00912",
+        "00917",
+        "00934",
+        "00941",
+        "00954",
+        "00956",
+        "00963",
+        "00964",
+        "009800",
+        "009801",
+        "009828"
+      ],
+      "expectedCoverage": "full",
+      "notes": "Official dated fund-asset pages publish all security tables with codes, quantities and weights. Eighteen live-probed codes are enabled here; the dedicated adapter accepts a snapshot as full only when every declared stock, bond and futures row is parsed and the host is the issuer's official domain."
+    },
+    {
+      "name": "ctbc-official-fund-assets-html-partial",
+      "enabled": true,
+      "status": "active",
+      "publisher": "中國信託證券投資信託股份有限公司",
+      "authorityType": "issuer",
+      "verifiedAt": "2026-09-12",
+      "priority": 60,
+      "format": "html",
+      "urlTemplate": "https://www.ctbcinvestments.com.tw/CTWEB/Content/ETF/pcd.aspx?ETF_ID={code}",
+      "codes": [
+        "00902",
+        "009819",
+        "00983A",
+        "00995A"
+      ],
+      "expectedCoverage": "partial",
+      "notes": "Official URLs are mapped, but these four codes remain partial until their special identifiers or intermittent asset-table responses pass the same full row-count verification as the other CTBC funds."
+    },
+    {
       "name": "cathay-official-pcf-api",
       "enabled": true,
       "status": "active",
