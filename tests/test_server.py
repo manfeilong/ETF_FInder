@@ -1281,6 +1281,117 @@ class ServerLogicTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["coverage"]["coveredListedCount"], 1)
 
+    def test_nomura_official_pcf_adapter_combines_all_asset_types_with_weights(self):
+        self.assertEqual(server.parse_weight_value(0), 0.0)
+        adapter = server.NomuraOfficialPcfAdapter(
+            api_base_url="https://issuer.example/API/ETFAPI/api",
+            headers={"Referer": "https://issuer.example/ETFWEB/pcf"},
+        )
+        responses = {
+            "Fund/GetFundTradeInfoDate": {
+                "StatusCode": 0,
+                "Entries": {"LatestDate": "2026/09/14", "AllDate": ["2026/09/14"]},
+            },
+            "Fund/GetFundTradeInfo": {
+                "StatusCode": 0,
+                "Entries": {
+                    "CFundId": "00935",
+                    "CPcfdate": "2026-09-14T00:00:00",
+                    "Stocks": [
+                        {
+                            "CStockCode": "2330",
+                            "CStockName": "台積電",
+                            "CQuantity": 5086000,
+                            "CWeightsPct": 24.38,
+                        }
+                    ],
+                    "Bonds": [
+                        {
+                            "CBondCode": "US91282TEST",
+                            "CBondName": "US TREASURY",
+                            "CBalParValue": 5920000,
+                            "CMarketValue": 5559798.73,
+                            "CHoldRatio": 11.25,
+                        }
+                    ],
+                    "Etfs": [
+                        {
+                            "CStockCode": "1306 JP",
+                            "CStockName": "NEXT FUNDS TOPIX",
+                            "CQuantity": 13497620,
+                            "CWeightsPct": 2.5,
+                        }
+                    ],
+                    "Futures": [
+                        {
+                            "CFuturesCode": "TX",
+                            "CFuturesName": "TAIEX FUTURE",
+                            "CQuantity": 144,
+                            "CWeightsPct": 2.65,
+                            "CContractYm": "2026/09",
+                        }
+                    ],
+                    "Options": [],
+                },
+            },
+        }
+        calls = []
+        original_post_json = server.post_json_with_retry
+        try:
+            def fake_post_json(url: str, payload: dict, timeout=20, retries=0, backoff_ms=0, headers=None):
+                calls.append((url, payload))
+                endpoint = next(name for name in responses if url.endswith(name))
+                return responses[endpoint], 1
+
+            server.post_json_with_retry = fake_post_json
+            payload = adapter.fetch_one("00935")
+        finally:
+            server.post_json_with_retry = original_post_json
+
+        self.assertEqual(payload["asOf"], "2026-09-14")
+        self.assertEqual(payload["declaredHoldingCount"], 4)
+        self.assertEqual(payload["parsedHoldingCount"], 4)
+        self.assertEqual(payload["coverage"], "full")
+        self.assertEqual(payload["holdings"]["2330"], 24.38)
+        self.assertEqual(payload["holdings"]["US91282TEST"], 11.25)
+        self.assertEqual(payload["holdings"]["1306 JP"], 2.5)
+        self.assertEqual(payload["holdings"]["FUTURE:TX:2026/09"], 2.65)
+        self.assertEqual(payload["holdingDetails"][1]["marketValue"], "5559798.73")
+        self.assertEqual(calls[1][1]["Date"], "2026/09/14")
+
+    def test_official_registry_builds_nomura_pcf_adapter(self):
+        source = {
+            "enabled": True,
+            "format": "nomura_pcf",
+            "url": "https://www.nomurafunds.com.tw/API/ETFAPI/api",
+            "codes": ["00935"],
+        }
+        adapter = server.OfficialRegistryAdapter().build_source_adapter(source, code="00935")
+        self.assertIsInstance(adapter, server.NomuraOfficialPcfAdapter)
+
+    def test_validate_official_source_registry_accepts_nomura_pcf(self):
+        universe = [{"code": "00935", "name": "ETF A", "issuer": "Nomura", "status": "listed"}]
+        registry = {
+            "schemaVersion": 1,
+            "sources": [
+                {
+                    "name": "nomura-official",
+                    "enabled": True,
+                    "status": "active",
+                    "publisher": "Nomura",
+                    "authorityType": "issuer",
+                    "verifiedAt": "2026-09-12",
+                    "format": "nomura_pcf",
+                    "expectedCoverage": "full",
+                    "url": "https://www.nomurafunds.com.tw/API/ETFAPI/api",
+                    "codes": ["00935"],
+                }
+            ],
+        }
+        result = server.validate_official_source_registry(registry, universe)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["coverage"]["productionReadyListedCount"], 1)
+
     def test_append_and_read_refresh_alerts(self):
         original_file = server.ALERTS_FILE
         with tempfile.TemporaryDirectory() as tmp_dir:
