@@ -34,6 +34,8 @@ Registry rows can match exact `codes`, per-code `urlsByCode`, `codePrefixes`, `i
 
 Cathay's issuer API uses `format: "cathay_pcf"` together with `url` and `fundCodesByCode`. The adapter first resolves the latest PCF date, then combines the official stock, bond, and futures basket endpoints. These endpoints publish quantities but no constituent weights, so their rows deliberately remain `partial_official_pcf_missing_weights`; zero weights are explicit placeholders and strict production mode rejects them.
 
+CTBC's dated fund-asset pages use `format: "ctbc_html"`. This dedicated parser supports plain numeric weights, overseas symbols and futures tables, checks that every declared security row was parsed, and only then emits `coverage: "full"`. Codes that have not passed the same live row-count check stay in a separate ordinary `html` source with partial coverage.
+
 Enable strict completeness gate for official snapshots:
 
 ```powershell
