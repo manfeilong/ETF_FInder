@@ -4,6 +4,34 @@
   "description": "Production official holdings sources. Only enable a source after its publisher, mapping and response have been verified.",
   "sources": [
     {
+      "name": "mega-official-pcf-page",
+      "enabled": true,
+      "status": "active",
+      "publisher": "兆豐國際證券投資信託股份有限公司",
+      "authorityType": "issuer",
+      "verifiedAt": "2026-09-12",
+      "priority": 50,
+      "format": "mega_pcf",
+      "url": "https://www.megafunds.com.tw/MEGA/etf/trade_pcf.aspx",
+      "headers": {
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Referer": "https://www.megafunds.com.tw/MEGA/etf/",
+        "User-Agent": "Mozilla/5.0 ETF-Finder/1.0"
+      },
+      "fundIdsByCode": {
+        "00690": "5",
+        "00911": "16",
+        "00913": "17",
+        "00921": "18",
+        "00932": "19",
+        "00943": "20",
+        "00982T": "22",
+        "00996A": "23"
+      },
+      "expectedCoverage": "full",
+      "notes": "The official ASP.NET PCF page requires a stateful form submission using the issuer's internal fund ID. All 8 universe codes were live-probed. The dedicated adapter verifies the returned ETF code and only parses tables that explicitly declare security-code and weight columns; every declared row must parse before full coverage is emitted."
+    },
+    {
       "name": "nomura-official-pcf-api",
       "enabled": true,
       "status": "active",

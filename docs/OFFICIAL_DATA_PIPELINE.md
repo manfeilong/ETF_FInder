@@ -42,6 +42,8 @@ Taishin product URLs accept the listed ETF code directly and expose weighted hol
 
 Nomura's ETFWEB PCF application uses `format: "nomura_pcf"` with the issuer API base URL. The dedicated adapter first resolves the latest available PCF date, then combines stock, bond, ETF, futures and option arrays. It verifies the response fund code and requires every declared row to have an identifier and numeric weight before emitting `coverage: "full"`; a missing or malformed row fails the fetch instead of silently downgrading integrity.
 
+Mega's official PCF page uses `format: "mega_pcf"` and `fundIdsByCode`. Because the ASP.NET page requires view state and cookies, the adapter performs an initial GET and submits the selected internal fund ID in the same session. It verifies the returned ETF code and deliberately reads only tables with explicit security-code and weight columns, preventing unrelated responsive-page text from being counted as a holding. Full coverage requires every declared table row to parse.
+
 Enable strict completeness gate for official snapshots:
 
 ```powershell

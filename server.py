@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import html
+import http.cookiejar
 import io
 import json
 import math
@@ -289,7 +290,7 @@ def load_official_source_registry() -> dict:
     return payload
 
 
-REGISTRY_FORMATS = {"json", "csv", "html", "cathay_pcf", "ctbc_html", "nomura_pcf"}
+REGISTRY_FORMATS = {"json", "csv", "html", "cathay_pcf", "ctbc_html", "nomura_pcf", "mega_pcf"}
 REGISTRY_AUTHORITY_TYPES = {"issuer", "exchange", "regulator"}
 REGISTRY_SOURCE_STATUSES = {"active", "testing", "disabled", "deprecated"}
 
@@ -358,7 +359,7 @@ def validate_official_source_registry(registry: dict, universe: list[dict]) -> d
 
         data_format = str(source.get("format") or "").strip().lower()
         if data_format not in REGISTRY_FORMATS:
-            source_issues.append("format must be json, csv, html, cathay_pcf, ctbc_html, or nomura_pcf")
+            source_issues.append("format must be json, csv, html, cathay_pcf, ctbc_html, nomura_pcf, or mega_pcf")
         expected_coverage = str(source.get("expectedCoverage") or "").strip().lower()
         if expected_coverage not in {"full", "partial"}:
             source_issues.append("expectedCoverage must be full or partial")
@@ -367,6 +368,7 @@ def validate_official_source_registry(registry: dict, universe: list[dict]) -> d
         url_template = str(source.get("urlTemplate") or source.get("url") or "").strip()
         urls_by_code = source.get("urlsByCode")
         fund_codes_by_code = source.get("fundCodesByCode")
+        fund_ids_by_code = source.get("fundIdsByCode")
         if url_template:
             parsed_url = urlparse(url_template.replace("{code}", "0050").replace("{date}", "2026-01-01"))
             if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
@@ -433,9 +435,35 @@ def validate_official_source_registry(registry: dict, universe: list[dict]) -> d
                     )
                 if data_format != "cathay_pcf":
                     source_issues.append("fundCodesByCode requires format=cathay_pcf")
+        if fund_ids_by_code is not None:
+            if not isinstance(fund_ids_by_code, dict) or not fund_ids_by_code:
+                source_issues.append("fundIdsByCode must be a non-empty object")
+            else:
+                selectors_present = True
+                normalized_fund_id_codes: list[str] = []
+                for raw_code, raw_fund_id in fund_ids_by_code.items():
+                    mapped_code = normalize_code(str(raw_code))
+                    normalized_fund_id_codes.append(mapped_code)
+                    fund_id = str(raw_fund_id or "").strip()
+                    if not CODE_PATTERN.fullmatch(mapped_code):
+                        source_issues.append(f"fundIdsByCode has invalid ETF code: {raw_code}")
+                    if not re.fullmatch(r"\d{1,8}", fund_id):
+                        source_issues.append(f"fundIdsByCode[{raw_code}] must be a numeric fund ID")
+                if len(normalized_fund_id_codes) != len(set(normalized_fund_id_codes)):
+                    source_issues.append("fundIdsByCode contains duplicate normalized ETF codes")
+                unknown_fund_id_codes = sorted(
+                    {code for code in normalized_fund_id_codes if code not in available_codes}
+                )
+                if unknown_fund_id_codes:
+                    source_warnings.append(
+                        "fundIdsByCode codes not found in current universe: "
+                        f"{','.join(unknown_fund_id_codes[:20])}"
+                    )
+                if data_format != "mega_pcf":
+                    source_issues.append("fundIdsByCode requires format=mega_pcf")
         if not selectors_present:
             source_issues.append(
-                f"one selector is required: {', '.join(selector_fields)}, urlsByCode, fundCodesByCode"
+                f"one selector is required: {', '.join(selector_fields)}, urlsByCode, fundCodesByCode, fundIdsByCode"
             )
 
         configured_codes = source.get("codes")
@@ -2353,7 +2381,11 @@ def extract_official_html_as_of(lines: list[str], fallback_date: str) -> str:
             if normalized_date:
                 return normalized_date
         match = re.search(r"(20\d{2})[./-](\d{1,2})[./-](\d{1,2})", str(line))
-        if match and any(keyword in str(line) for keyword in {"交易日期", "公告日期", "資料日期"}):
+        nearby_text = " ".join(str(value) for value in lines[index:min(len(lines), index + 3)])
+        if match and any(
+            keyword in nearby_text
+            for keyword in {"交易日期", "公告日期", "資料日期", "申購買回清單公告"}
+        ):
             return f"{match.group(1)}-{int(match.group(2)):02d}-{int(match.group(3)):02d}"
     return normalize_snapshot_as_of(fallback_date)
 
@@ -2416,6 +2448,7 @@ def is_official_holding_identifier(value: str) -> bool:
         CODE_PATTERN.fullmatch(identifier)
         or re.fullmatch(r"[A-Z]{2}[A-Z0-9]{10}", identifier)
         or re.fullmatch(r"[A-Z0-9][A-Z0-9./-]{0,15}(?: [A-Z0-9]{1,8}){1,2}", identifier)
+        or re.fullmatch(r"[A-Z0-9]{1,12}_[A-Z0-9]{1,8}", identifier)
         or re.fullmatch(r"[A-Z]{1,6}", identifier)
         or re.fullmatch(r"[A-Z]{1,6}\d{4,8}", identifier)
     )
@@ -3116,6 +3149,10 @@ def official_registry_source_matches(source: dict, code: str, universe_row: dict
     if isinstance(fund_codes_by_code, dict) and fund_codes_by_code:
         configured_fund_codes = {normalize_code(str(item)) for item in fund_codes_by_code}
         return normalized_code in configured_fund_codes
+    fund_ids_by_code = source.get("fundIdsByCode")
+    if isinstance(fund_ids_by_code, dict) and fund_ids_by_code:
+        configured_fund_id_codes = {normalize_code(str(item)) for item in fund_ids_by_code}
+        return normalized_code in configured_fund_id_codes
     configured_codes = source.get("codes")
     if isinstance(configured_codes, list) and configured_codes:
         return normalized_code in {normalize_code(str(item)) for item in configured_codes}
@@ -3437,6 +3474,118 @@ class NomuraOfficialPcfAdapter:
         }
 
 
+class MegaOfficialPcfAdapter:
+    """Submit Mega's official ASP.NET PCF selector and parse only declared holdings tables."""
+
+    name = "mega_official_pcf"
+    source_label = "Mega official PCF page"
+
+    def __init__(
+        self,
+        page_url: str,
+        fund_id: str,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        self.page_url = str(page_url or "").strip()
+        self.fund_id = str(fund_id or "").strip()
+        self.headers = headers or {}
+        parsed_url = urlparse(self.page_url)
+        if parsed_url.scheme != "https" or not parsed_url.hostname:
+            raise ValueError("Mega PCF page URL must be an absolute HTTPS URL.")
+        if not parsed_url.hostname.lower().endswith("megafunds.com.tw"):
+            raise ValueError("Mega PCF adapter requires an official megafunds.com.tw URL.")
+        if not re.fullmatch(r"\d{1,8}", self.fund_id):
+            raise ValueError("Mega PCF fund ID must be numeric.")
+
+    @staticmethod
+    def response_text(response) -> str:
+        charset = response.headers.get_content_charset() or "utf-8"
+        return response.read().decode(charset, errors="replace")
+
+    @staticmethod
+    def hidden_field(markup: str, name: str) -> str:
+        match = re.search(
+            rf'<input[^>]+name=["\']{re.escape(name)}["\'][^>]+value=["\']([^"\']*)["\']',
+            markup,
+            re.IGNORECASE,
+        )
+        return html.unescape(match.group(1)) if match else ""
+
+    def fetch_html(self, code: str) -> tuple[str, int]:
+        request_headers = {
+            "User-Agent": "Mozilla/5.0 ETF-Finder/1.0",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
+        }
+        request_headers.update(self.headers)
+        attempts = max(1, LIVE_FETCH_RETRIES + 1)
+        last_error: Exception | None = None
+        for attempt in range(1, attempts + 1):
+            try:
+                cookie_jar = http.cookiejar.CookieJar()
+                opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookie_jar))
+                initial_request = urllib.request.Request(self.page_url, headers=request_headers)
+                with opener.open(initial_request, timeout=LIVE_FETCH_TIMEOUT_SECONDS) as response:
+                    initial_markup = self.response_text(response)
+                form_payload = {
+                    "__VIEWSTATE": self.hidden_field(initial_markup, "__VIEWSTATE"),
+                    "__VIEWSTATEGENERATOR": self.hidden_field(initial_markup, "__VIEWSTATEGENERATOR"),
+                    "__VIEWSTATEENCRYPTED": self.hidden_field(initial_markup, "__VIEWSTATEENCRYPTED"),
+                    "ctl00$ContentPlaceHolder1$category_id": "",
+                    "ctl00$ContentPlaceHolder1$fund_id": self.fund_id,
+                    "ctl00$ContentPlaceHolder1$button1": "查 詢",
+                }
+                if not form_payload["__VIEWSTATE"]:
+                    raise ValueError("Mega PCF page did not expose ASP.NET view state.")
+                post_headers = dict(request_headers)
+                post_headers["Content-Type"] = "application/x-www-form-urlencoded"
+                post_request = urllib.request.Request(
+                    self.page_url,
+                    data=urlencode(form_payload).encode("utf-8"),
+                    headers=post_headers,
+                    method="POST",
+                )
+                with opener.open(post_request, timeout=LIVE_FETCH_TIMEOUT_SECONDS) as response:
+                    return self.response_text(response), attempt
+            except (urllib.error.URLError, TimeoutError, ValueError) as exc:
+                last_error = exc
+                if attempt >= attempts:
+                    break
+                if LIVE_FETCH_BACKOFF_MS > 0:
+                    time.sleep(LIVE_FETCH_BACKOFF_MS / 1000)
+        raise RuntimeError(f"Failed to fetch Mega PCF page after {attempts} attempts: {last_error}") from last_error
+
+    def fetch_one(self, code: str) -> dict:
+        normalized_code = normalize_code(code)
+        markup, attempts = self.fetch_html(normalized_code)
+        displayed_code = re.search(r"股票代號[：:]\s*([0-9A-Z]+)", markup, re.IGNORECASE)
+        if not displayed_code or normalize_code(displayed_code.group(1)) != normalized_code:
+            actual = displayed_code.group(1) if displayed_code else "missing"
+            raise RuntimeError(f"Mega PCF code mismatch: expected {normalized_code}, got {actual}.")
+        holdings, details = extract_official_html_table_holdings(markup)
+        declared_count = count_official_html_security_rows(markup)
+        parsed_count = len(holdings)
+        if declared_count <= 0 or parsed_count != declared_count:
+            raise RuntimeError(
+                f"Mega PCF row verification failed for {normalized_code}: "
+                f"declared {declared_count}, parsed {parsed_count}."
+            )
+        as_of = extract_official_html_as_of(html_to_lines(markup), time.strftime("%Y-%m-%d"))
+        return {
+            "code": normalized_code,
+            "source": self.source_label,
+            "adapter": self.name,
+            "asOf": as_of,
+            "holdings": holdings,
+            "holdingDetails": details,
+            "declaredHoldingCount": declared_count,
+            "parsedHoldingCount": parsed_count,
+            "coverage": "full",
+            "fetchUrl": self.page_url,
+            "attempts": attempts,
+        }
+
+
 class CtbcOfficialHoldingsAdapter(OfficialEndpointAdapter):
     """Parse CTBC's dated full-fund asset tables with row-count verification."""
 
@@ -3486,7 +3635,7 @@ class OfficialRegistryAdapter:
 
     def build_source_adapter(
         self, source: dict, code: str = ""
-    ) -> OfficialEndpointAdapter | CathayOfficialPcfAdapter | NomuraOfficialPcfAdapter:
+    ) -> OfficialEndpointAdapter | CathayOfficialPcfAdapter | NomuraOfficialPcfAdapter | MegaOfficialPcfAdapter:
         url_template = ""
         urls_by_code = source.get("urlsByCode")
         if isinstance(urls_by_code, dict) and code:
@@ -3530,6 +3679,17 @@ class OfficialRegistryAdapter:
                 headers=headers,
                 default_as_of=str(source.get("date") or ""),
             )
+        if data_format == "mega_pcf":
+            fund_ids_by_code = source.get("fundIdsByCode")
+            if not isinstance(fund_ids_by_code, dict):
+                raise ValueError("Mega PCF registry source requires fundIdsByCode.")
+            normalized_fund_ids = {
+                normalize_code(str(key)): str(value).strip() for key, value in fund_ids_by_code.items()
+            }
+            fund_id = normalized_fund_ids.get(normalize_code(code), "")
+            if not fund_id:
+                raise ValueError(f"Mega PCF registry source has no fund ID for {code}.")
+            return MegaOfficialPcfAdapter(page_url=url_template, fund_id=fund_id, headers=headers)
         return OfficialEndpointAdapter(
             url_template=url_template,
             data_format=data_format,
