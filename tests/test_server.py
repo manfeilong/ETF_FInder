@@ -957,6 +957,30 @@ class ServerLogicTests(unittest.TestCase):
         self.assertEqual(payload["parsedHoldingCount"], 2)
         self.assertEqual(payload["adapter"], "ctbc_official_holdings")
 
+    def test_parse_fuhwa_security_and_futures_table_labels(self):
+        markup = """
+        <div>資料日期：2026/09/11</div>
+        <table>
+          <tr><th>證券代號</th><th>證券名稱</th><th>股數</th><th>金額</th><th>權重 (%)</th></tr>
+          <tr><td>000333 CH</td><td>美的集團</td><td>655</td><td>1000</td><td>2.50%</td></tr>
+        </table>
+        <table>
+          <tr><th>期貨代號</th><th>期貨名稱</th><th>口數</th><th>金額</th><th>權重 (%)</th></tr>
+          <tr><td>NK202609</td><td>日經225近月期貨</td><td>20</td><td>1000</td><td>3.690%</td></tr>
+        </table>
+        """
+        parsed = server.parse_official_html_labeled_holdings(
+            code="00949",
+            markup=markup,
+            fetch_url="https://www.fhtrust.com.tw/ETF/etf_detail/ETF22",
+            fallback_date="2026-09-12",
+            source_label="Fuhwa official page",
+        )
+        self.assertEqual(parsed["asOf"], "2026-09-11")
+        self.assertEqual(parsed["parsedHoldingCount"], 2)
+        self.assertAlmostEqual(parsed["holdings"]["000333 CH"], 2.5, places=4)
+        self.assertAlmostEqual(parsed["holdings"]["NK202609"], 3.69, places=4)
+
     def test_parse_official_html_flat_responsive_holdings(self):
         markup = """
         <div>股票</div>

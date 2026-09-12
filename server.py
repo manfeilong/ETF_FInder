@@ -2252,9 +2252,10 @@ def normalize_endpoint_rows(
 
 
 OFFICIAL_HTML_CODE_LABELS = {
-    "商品代碼", "股票代碼", "股票代號", "債券代碼", "債券代號", "期貨代碼", "代號", "Code"
+    "商品代碼", "證券代碼", "證券代號", "股票代碼", "股票代號", "債券代碼", "債券代號",
+    "期貨代碼", "期貨代號", "代號", "Code"
 }
-OFFICIAL_HTML_NAME_LABELS = {"商品名稱", "股票名稱", "債券名稱", "期貨名稱", "名稱", "Name"}
+OFFICIAL_HTML_NAME_LABELS = {"商品名稱", "證券名稱", "股票名稱", "債券名稱", "期貨名稱", "名稱", "Name"}
 OFFICIAL_HTML_SHARES_LABELS = {"商品數量", "股數", "口數", "數量", "持有數", "面額", "Qty", "Quantity"}
 OFFICIAL_HTML_WEIGHT_LABELS = {
     "商品權重", "權重", "權重(%)", "持股比重", "持股權重", "持股權重(%)", "Weight"
@@ -2382,6 +2383,7 @@ def is_official_holding_identifier(value: str) -> bool:
         or re.fullmatch(r"[A-Z]{2}[A-Z0-9]{10}", identifier)
         or re.fullmatch(r"[A-Z0-9][A-Z0-9./-]{0,15}(?: [A-Z0-9]{1,8}){1,2}", identifier)
         or re.fullmatch(r"[A-Z]{1,6}", identifier)
+        or re.fullmatch(r"[A-Z]{1,6}\d{4,8}", identifier)
     )
 
 
