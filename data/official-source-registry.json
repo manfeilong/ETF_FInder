@@ -4,6 +4,36 @@
   "description": "Production official holdings sources. Only enable a source after its publisher, mapping and response have been verified.",
   "sources": [
     {
+      "name": "nomura-official-pcf-api",
+      "enabled": true,
+      "status": "active",
+      "publisher": "野村證券投資信託股份有限公司",
+      "authorityType": "issuer",
+      "verifiedAt": "2026-09-12",
+      "priority": 50,
+      "format": "nomura_pcf",
+      "url": "https://www.nomurafunds.com.tw/API/ETFAPI/api",
+      "headers": {
+        "Accept": "application/json",
+        "Referer": "https://www.nomurafunds.com.tw/ETFWEB/pcf",
+        "User-Agent": "Mozilla/5.0 ETF-Finder/1.0"
+      },
+      "codes": [
+        "00935",
+        "00944",
+        "00960",
+        "00971",
+        "00972",
+        "00980A",
+        "009812",
+        "009821",
+        "00985A",
+        "00999A"
+      ],
+      "expectedCoverage": "full",
+      "notes": "The issuer's ETFWEB PCF application uses this official API to resolve the latest available date and publish all stock, bond, ETF, futures and option rows with quantities and weights. All 10 universe codes were live-probed; the dedicated adapter accepts full coverage only when every declared row has a usable identifier and numeric weight."
+    },
+    {
       "name": "taishin-official-etf-detail-html",
       "enabled": true,
       "status": "active",
