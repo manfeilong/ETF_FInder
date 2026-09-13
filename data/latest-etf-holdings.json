@@ -20,7 +20,7 @@
     "officialTwseConfigured": false,
     "officialTwseFormat": "csv",
     "officialSourceRegistryFile": "D:\\ETF_Finder\\data\\official-source-registry.json",
-    "officialSourceRegistryConfigured": false,
+    "officialSourceRegistryConfigured": true,
     "historyRetention": {
       "retentionDays": 730,
       "maxSnapshotsPerCode": 0,
@@ -34,7 +34,7 @@
     },
     "alertWebhookEnabled": false
   },
-  "fetchedAt": "2026-09-12T13:42:46+0800",
+  "fetchedAt": "2026-09-12T22:46:33+0800",
   "requestedCodes": [
     "00400A",
     "00403A",
@@ -1260,6 +1260,6 @@
     "errorCount": 0,
     "message": "Public-page parser returned partial holdings; use official PCF/TWSE adapters for production-grade completeness."
   },
-  "savedAt": "2026-09-12T13:42:46+0800",
+  "savedAt": "2026-09-12T22:46:33+0800",
   "savedTo": "data/latest-etf-holdings.json"
 }

@@ -290,7 +290,9 @@ def load_official_source_registry() -> dict:
     return payload
 
 
-REGISTRY_FORMATS = {"json", "csv", "html", "cathay_pcf", "ctbc_html", "nomura_pcf", "mega_pcf"}
+REGISTRY_FORMATS = {
+    "json", "csv", "html", "cathay_pcf", "ctbc_html", "nomura_pcf", "mega_pcf", "kgi_pcf"
+}
 REGISTRY_AUTHORITY_TYPES = {"issuer", "exchange", "regulator"}
 REGISTRY_SOURCE_STATUSES = {"active", "testing", "disabled", "deprecated"}
 
@@ -359,7 +361,9 @@ def validate_official_source_registry(registry: dict, universe: list[dict]) -> d
 
         data_format = str(source.get("format") or "").strip().lower()
         if data_format not in REGISTRY_FORMATS:
-            source_issues.append("format must be json, csv, html, cathay_pcf, ctbc_html, nomura_pcf, or mega_pcf")
+            source_issues.append(
+                "format must be json, csv, html, cathay_pcf, ctbc_html, nomura_pcf, mega_pcf, or kgi_pcf"
+            )
         expected_coverage = str(source.get("expectedCoverage") or "").strip().lower()
         if expected_coverage not in {"full", "partial"}:
             source_issues.append("expectedCoverage must be full or partial")
@@ -369,6 +373,7 @@ def validate_official_source_registry(registry: dict, universe: list[dict]) -> d
         urls_by_code = source.get("urlsByCode")
         fund_codes_by_code = source.get("fundCodesByCode")
         fund_ids_by_code = source.get("fundIdsByCode")
+        fund_keys_by_code = source.get("fundKeysByCode")
         if url_template:
             parsed_url = urlparse(url_template.replace("{code}", "0050").replace("{date}", "2026-01-01"))
             if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
@@ -461,9 +466,36 @@ def validate_official_source_registry(registry: dict, universe: list[dict]) -> d
                     )
                 if data_format != "mega_pcf":
                     source_issues.append("fundIdsByCode requires format=mega_pcf")
+        if fund_keys_by_code is not None:
+            if not isinstance(fund_keys_by_code, dict) or not fund_keys_by_code:
+                source_issues.append("fundKeysByCode must be a non-empty object")
+            else:
+                selectors_present = True
+                normalized_fund_key_codes: list[str] = []
+                for raw_code, raw_fund_key in fund_keys_by_code.items():
+                    mapped_code = normalize_code(str(raw_code))
+                    normalized_fund_key_codes.append(mapped_code)
+                    fund_key = str(raw_fund_key or "").strip().upper()
+                    if not CODE_PATTERN.fullmatch(mapped_code):
+                        source_issues.append(f"fundKeysByCode has invalid ETF code: {raw_code}")
+                    if not re.fullmatch(r"[A-Z][A-Z0-9]{1,11}", fund_key):
+                        source_issues.append(f"fundKeysByCode[{raw_code}] must be an alphanumeric fund key")
+                if len(normalized_fund_key_codes) != len(set(normalized_fund_key_codes)):
+                    source_issues.append("fundKeysByCode contains duplicate normalized ETF codes")
+                unknown_fund_key_codes = sorted(
+                    {code for code in normalized_fund_key_codes if code not in available_codes}
+                )
+                if unknown_fund_key_codes:
+                    source_warnings.append(
+                        "fundKeysByCode codes not found in current universe: "
+                        f"{','.join(unknown_fund_key_codes[:20])}"
+                    )
+                if data_format != "kgi_pcf":
+                    source_issues.append("fundKeysByCode requires format=kgi_pcf")
         if not selectors_present:
             source_issues.append(
-                f"one selector is required: {', '.join(selector_fields)}, urlsByCode, fundCodesByCode, fundIdsByCode"
+                f"one selector is required: {', '.join(selector_fields)}, urlsByCode, "
+                "fundCodesByCode, fundIdsByCode, fundKeysByCode"
             )
 
         configured_codes = source.get("codes")
@@ -2136,6 +2168,39 @@ def post_json_with_retry(
     raise RuntimeError(f"Failed to post JSON after {attempts} attempts: {last_error}") from last_error
 
 
+def post_form_with_retry(
+    url: str,
+    payload: dict,
+    timeout: int = LIVE_FETCH_TIMEOUT_SECONDS,
+    retries: int = LIVE_FETCH_RETRIES,
+    backoff_ms: int = LIVE_FETCH_BACKOFF_MS,
+    headers: dict[str, str] | None = None,
+) -> tuple[str, int]:
+    request_headers = {
+        "User-Agent": "Mozilla/5.0 ETF True Exposure Lab data refresh",
+        "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+        "Content-Type": "application/x-www-form-urlencoded",
+    }
+    if headers:
+        request_headers.update(headers)
+    body = urlencode(payload).encode("utf-8")
+    attempts = max(1, retries + 1)
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            request = urllib.request.Request(url, data=body, headers=request_headers, method="POST")
+            with open_url_with_same_origin_308(request, timeout=timeout) as response:
+                charset = response.headers.get_content_charset() or "utf-8"
+                return response.read().decode(charset, errors="replace"), attempt
+        except (urllib.error.URLError, TimeoutError, ValueError) as exc:
+            last_error = exc
+            if attempt >= attempts:
+                break
+            if backoff_ms > 0:
+                time.sleep(backoff_ms / 1000)
+    raise RuntimeError(f"Failed to post form after {attempts} attempts: {last_error}") from last_error
+
+
 class HoldingsAdapter(Protocol):
     name: str
     source_label: str
@@ -2697,6 +2762,56 @@ def extract_official_html_flat_holdings(lines: list[str]) -> tuple[dict[str, flo
     return holdings, list(details_by_code.values())
 
 
+def extract_kgi_responsive_bond_holdings(lines: list[str]) -> tuple[dict[str, float], list[dict], int]:
+    """Parse KGI's fixed-column bond rows, which are rendered as adjacent div elements."""
+    holdings: dict[str, float] = {}
+    details: list[dict] = []
+    declared_count = 0
+    normalized_lines = [normalize_official_table_header(line) for line in lines]
+    for header_start, token in enumerate(normalized_lines):
+        if token not in {"債券代碼", "債劵代碼"}:
+            continue
+        header = normalized_lines[header_start:min(len(lines), header_start + 8)]
+        required = {
+            "name": next((index for index, value in enumerate(header) if value in {"債券名稱", "債劵名稱"}), -1),
+            "shares": next((index for index, value in enumerate(header) if value == "面額"), -1),
+            "market": next((index for index, value in enumerate(header) if value == "市值"), -1),
+            "weight": next((index for index, value in enumerate(header) if value == "持債比例"), -1),
+        }
+        if any(index < 0 for index in required.values()):
+            raise ValueError("KGI bond section is missing a required column.")
+        row_width = max(required.values()) + 1
+        index = header_start + row_width
+        while index + row_width <= len(lines):
+            holding_code = normalize_official_holding_identifier(lines[index])
+            if not is_official_holding_identifier(holding_code):
+                break
+            declared_count += 1
+            name = str(lines[index + required["name"]] or "").strip()
+            shares = re.sub(r"[^0-9.+-]", "", str(lines[index + required["shares"]]))
+            market_value = re.sub(r"[^0-9.+-]", "", str(lines[index + required["market"]]))
+            try:
+                weight = parse_weight_value(lines[index + required["weight"]])
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"Invalid KGI bond weight for {holding_code}.") from exc
+            if not name:
+                raise ValueError(f"KGI bond row has no name for {holding_code}.")
+            holdings[holding_code] = weight
+            details.append(
+                {
+                    "code": holding_code,
+                    "name": name,
+                    "weight": weight,
+                    "shares": shares,
+                    "price": "",
+                    "marketValue": market_value,
+                    "assetType": "bond",
+                }
+            )
+            index += row_width
+    return holdings, details, declared_count
+
+
 def parse_official_html_labeled_holdings(
     code: str,
     markup: str,
@@ -3153,6 +3268,10 @@ def official_registry_source_matches(source: dict, code: str, universe_row: dict
     if isinstance(fund_ids_by_code, dict) and fund_ids_by_code:
         configured_fund_id_codes = {normalize_code(str(item)) for item in fund_ids_by_code}
         return normalized_code in configured_fund_id_codes
+    fund_keys_by_code = source.get("fundKeysByCode")
+    if isinstance(fund_keys_by_code, dict) and fund_keys_by_code:
+        configured_fund_key_codes = {normalize_code(str(item)) for item in fund_keys_by_code}
+        return normalized_code in configured_fund_key_codes
     configured_codes = source.get("codes")
     if isinstance(configured_codes, list) and configured_codes:
         return normalized_code in {normalize_code(str(item)) for item in configured_codes}
@@ -3586,6 +3705,85 @@ class MegaOfficialPcfAdapter:
         }
 
 
+class KgiOfficialPcfAdapter:
+    """Read KGI's official PCF partial-view endpoint with stock, futures and bond verification."""
+
+    name = "kgi_official_pcf"
+    source_label = "KGI official PCF endpoint"
+
+    def __init__(
+        self,
+        endpoint_url: str,
+        fund_key: str,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        self.endpoint_url = str(endpoint_url or "").strip()
+        self.fund_key = str(fund_key or "").strip().upper()
+        self.headers = headers or {}
+        parsed_url = urlparse(self.endpoint_url)
+        if parsed_url.scheme != "https" or not parsed_url.hostname:
+            raise ValueError("KGI PCF endpoint URL must be an absolute HTTPS URL.")
+        if not parsed_url.hostname.lower().endswith("kgifund.com.tw"):
+            raise ValueError("KGI PCF adapter requires an official kgifund.com.tw URL.")
+        if not re.fullmatch(r"[A-Z][A-Z0-9]{1,11}", self.fund_key):
+            raise ValueError("KGI PCF fund key must be alphanumeric and start with a letter.")
+
+    def fetch_one(self, code: str) -> dict:
+        normalized_code = normalize_code(code)
+        headers = {
+            "Referer": "https://www.kgifund.com.tw/Fund/RedemptionList",
+            "X-Requested-With": "XMLHttpRequest",
+        }
+        headers.update(self.headers)
+        markup, attempts = post_form_with_retry(
+            url=self.endpoint_url,
+            payload={"fundID": self.fund_key, "queryDate": ""},
+            headers=headers,
+        )
+        displayed_code = re.search(rf"\({re.escape(normalized_code)}\)", markup, re.IGNORECASE)
+        if not displayed_code:
+            raise RuntimeError(f"KGI PCF response does not identify requested ETF {normalized_code}.")
+
+        table_holdings, table_details = extract_official_html_table_holdings(markup)
+        table_declared_count = count_official_html_security_rows(markup)
+        if len(table_holdings) != table_declared_count:
+            raise RuntimeError(
+                f"KGI PCF table verification failed for {normalized_code}: "
+                f"declared {table_declared_count}, parsed {len(table_holdings)}."
+            )
+        lines = html_to_lines(markup)
+        bond_holdings, bond_details, bond_declared_count = extract_kgi_responsive_bond_holdings(lines)
+        duplicate_codes = set(table_holdings) & set(bond_holdings)
+        if duplicate_codes:
+            raise RuntimeError(
+                f"KGI PCF returned duplicate table and bond identifiers for {normalized_code}: "
+                f"{','.join(sorted(duplicate_codes)[:5])}."
+            )
+        holdings = {**table_holdings, **bond_holdings}
+        details = table_details + bond_details
+        declared_count = table_declared_count + bond_declared_count
+        parsed_count = len(holdings)
+        if declared_count <= 0 or parsed_count != declared_count:
+            raise RuntimeError(
+                f"KGI PCF row verification failed for {normalized_code}: "
+                f"declared {declared_count}, parsed {parsed_count}."
+            )
+        as_of = extract_official_html_as_of(lines, time.strftime("%Y-%m-%d"))
+        return {
+            "code": normalized_code,
+            "source": self.source_label,
+            "adapter": self.name,
+            "asOf": as_of,
+            "holdings": holdings,
+            "holdingDetails": details,
+            "declaredHoldingCount": declared_count,
+            "parsedHoldingCount": parsed_count,
+            "coverage": "full",
+            "fetchUrl": self.endpoint_url,
+            "attempts": attempts,
+        }
+
+
 class CtbcOfficialHoldingsAdapter(OfficialEndpointAdapter):
     """Parse CTBC's dated full-fund asset tables with row-count verification."""
 
@@ -3635,7 +3833,13 @@ class OfficialRegistryAdapter:
 
     def build_source_adapter(
         self, source: dict, code: str = ""
-    ) -> OfficialEndpointAdapter | CathayOfficialPcfAdapter | NomuraOfficialPcfAdapter | MegaOfficialPcfAdapter:
+    ) -> (
+        OfficialEndpointAdapter
+        | CathayOfficialPcfAdapter
+        | NomuraOfficialPcfAdapter
+        | MegaOfficialPcfAdapter
+        | KgiOfficialPcfAdapter
+    ):
         url_template = ""
         urls_by_code = source.get("urlsByCode")
         if isinstance(urls_by_code, dict) and code:
@@ -3690,6 +3894,17 @@ class OfficialRegistryAdapter:
             if not fund_id:
                 raise ValueError(f"Mega PCF registry source has no fund ID for {code}.")
             return MegaOfficialPcfAdapter(page_url=url_template, fund_id=fund_id, headers=headers)
+        if data_format == "kgi_pcf":
+            fund_keys_by_code = source.get("fundKeysByCode")
+            if not isinstance(fund_keys_by_code, dict):
+                raise ValueError("KGI PCF registry source requires fundKeysByCode.")
+            normalized_fund_keys = {
+                normalize_code(str(key)): str(value).strip() for key, value in fund_keys_by_code.items()
+            }
+            fund_key = normalized_fund_keys.get(normalize_code(code), "")
+            if not fund_key:
+                raise ValueError(f"KGI PCF registry source has no fund key for {code}.")
+            return KgiOfficialPcfAdapter(endpoint_url=url_template, fund_key=fund_key, headers=headers)
         return OfficialEndpointAdapter(
             url_template=url_template,
             data_format=data_format,

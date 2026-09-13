@@ -1454,6 +1454,79 @@ class ServerLogicTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["coverage"]["productionReadyListedCount"], 1)
 
+    def test_kgi_official_pcf_adapter_combines_tables_and_responsive_bonds(self):
+        adapter = server.KgiOfficialPcfAdapter(
+            endpoint_url="https://www.kgifund.com.tw/Fund/RedemptionVC",
+            fund_key="J022",
+        )
+        markup = """
+        <p>平衡凱基雙核收息(00981T)</p><p>2026/09/14</p><p>現金申購買回清單公告</p>
+        <table>
+          <tr><th>股票代號</th><th>股票名稱</th><th>股數</th><th>權重(%)</th></tr>
+          <tr><td>2330</td><td>台積電</td><td>212,000</td><td>17.59</td></tr>
+        </table>
+        <div>債劵代碼</div><div>債劵名稱</div><div>面額</div><div>市值</div><div>持債比例</div>
+        <div>YL4143456</div><div>CHTR 6.7 12/01/55</div><div>4,000,000</div><div>3,546,960</div><div>3.78</div>
+        <div>ZF3056610</div><div>SOCGEN 7.132 01/19/55</div><div>3,400,000</div><div>3,314,864</div><div>3.54</div>
+        <div>持債特性</div>
+        """
+        original_post_form = server.post_form_with_retry
+        calls = []
+        try:
+            def fake_post_form(url: str, payload: dict, timeout=20, retries=0, backoff_ms=0, headers=None):
+                calls.append((url, payload))
+                return markup, 1
+
+            server.post_form_with_retry = fake_post_form
+            payload = adapter.fetch_one("00981T")
+        finally:
+            server.post_form_with_retry = original_post_form
+
+        self.assertEqual(calls[0][1], {"fundID": "J022", "queryDate": ""})
+        self.assertEqual(payload["asOf"], "2026-09-14")
+        self.assertEqual(payload["declaredHoldingCount"], 3)
+        self.assertEqual(payload["parsedHoldingCount"], 3)
+        self.assertEqual(payload["holdings"]["2330"], 17.59)
+        self.assertEqual(payload["holdings"]["YL4143456"], 3.78)
+        bond = next(row for row in payload["holdingDetails"] if row["code"] == "YL4143456")
+        self.assertEqual(bond["marketValue"], "3546960")
+        self.assertEqual(payload["coverage"], "full")
+
+    def test_official_registry_builds_kgi_pcf_adapter_from_fund_key_mapping(self):
+        source = {
+            "enabled": True,
+            "format": "kgi_pcf",
+            "url": "https://www.kgifund.com.tw/Fund/RedemptionVC",
+            "fundKeysByCode": {"00915": "J015"},
+        }
+        self.assertTrue(server.official_registry_source_matches(source, "00915", None))
+        adapter = server.OfficialRegistryAdapter().build_source_adapter(source, code="00915")
+        self.assertIsInstance(adapter, server.KgiOfficialPcfAdapter)
+        self.assertEqual(adapter.fund_key, "J015")
+
+    def test_validate_official_source_registry_accepts_kgi_fund_key_mapping(self):
+        universe = [{"code": "00915", "name": "ETF A", "issuer": "KGI", "status": "listed"}]
+        registry = {
+            "schemaVersion": 1,
+            "sources": [
+                {
+                    "name": "kgi-official",
+                    "enabled": True,
+                    "status": "active",
+                    "publisher": "KGI",
+                    "authorityType": "issuer",
+                    "verifiedAt": "2026-09-12",
+                    "format": "kgi_pcf",
+                    "expectedCoverage": "full",
+                    "url": "https://www.kgifund.com.tw/Fund/RedemptionVC",
+                    "fundKeysByCode": {"00915": "J015"},
+                }
+            ],
+        }
+        result = server.validate_official_source_registry(registry, universe)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["coverage"]["productionReadyListedCount"], 1)
+
     def test_append_and_read_refresh_alerts(self):
         original_file = server.ALERTS_FILE
         with tempfile.TemporaryDirectory() as tmp_dir:
